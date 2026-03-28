@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "../Led_Matrix"
+		},
+		{
+			"name": "Led_matrix",
+			"path": "../../Documents/PlatformIO/Projects/Led_matrix"
+		},
+		{
+			"name": "Led_matrix",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
