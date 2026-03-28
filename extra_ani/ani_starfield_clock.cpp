@@ -116,7 +116,7 @@ void drawDigit(int digit, int startCol) {
     for (int row = 0; row < 5; row++) {
       int drawRow = row + 1;
       bool on = (colData >> row) & 1;
-      if (on) mx.setPoint(drawRow, startCol + col, !isInverse);
+      if (on) mx.setPoint(drawRow, 31 - (startCol + col), !isInverse);
     }
   }
 }
@@ -128,7 +128,7 @@ void drawClock() {
   int m = t->tm_min;
 
   int digits[4] = { h / 10, h % 10, m / 10, m % 10 };
-  int cols[4] = { 3, 8, 17, 22 };
+  int cols[4] = { 5, 10, 19, 24 };
 
   for (int i = 0; i < 4; i++) {
     drawDigit(digits[i], cols[i]);
@@ -136,8 +136,8 @@ void drawClock() {
 
   // Blinking colon
   if ((millis() / 500) % 2 == 0) {
-    mx.setPoint(2, 14, !isInverse);
-    mx.setPoint(5, 14, !isInverse);
+    mx.setPoint(2, 31 - 16, !isInverse);
+    mx.setPoint(5, 31 - 16, !isInverse);
   }
 }
 

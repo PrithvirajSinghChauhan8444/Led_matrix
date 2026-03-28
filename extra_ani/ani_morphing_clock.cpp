@@ -58,7 +58,7 @@ void drawDigit(int digit, int startCol, int yOffset, bool inv) {
       int drawRow = row + 1 + yOffset;  // +1 to center vertically (row 1-5 of 0-7)
       if (drawRow >= 0 && drawRow < 8) {
         bool on = (colData >> row) & 1;
-        if (on) mx.setPoint(drawRow, startCol + col, !inv);
+        if (on) mx.setPoint(drawRow, 31 - (startCol + col), !inv);
       }
     }
   }
@@ -67,8 +67,8 @@ void drawDigit(int digit, int startCol, int yOffset, bool inv) {
 // Draw the colon between hours and minutes
 void drawColon(int col, bool blink, bool inv) {
   if (!blink) return;  // colon off phase
-  mx.setPoint(2, col, !inv);
-  mx.setPoint(5, col, !inv);
+  mx.setPoint(2, 31 - col, !inv);
+  mx.setPoint(5, 31 - col, !inv);
 }
 
 void getTime(int* h, int* m) {
@@ -152,9 +152,8 @@ void loop() {
     for (int c = 0; c < 32; c++)
       mx.setPoint(r, c, isInverse);
 
-  // Digit positions: [col 3] [col 8] : [col 17] [col 22]
-  //                   D0       D1   colon D2       D3
-  int digitCols[4] = {3, 8, 17, 22};
+  // Digit positions
+  int digitCols[4] = {5, 10, 19, 24};
 
   if (morphing) {
     // Draw old digits sliding up, new digits sliding in from below
@@ -183,7 +182,7 @@ void loop() {
 
   // Colon blinks every 500ms
   colonBlink = (millis() / 500) % 2 == 0;
-  drawColon(14, colonBlink, isInverse);
+  drawColon(16, colonBlink, isInverse);
 
   mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
 }
