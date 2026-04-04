@@ -13,23 +13,53 @@
         <div class="circle circle-2"></div>
         <div class="circle circle-3"></div>
     </div>
-    <div class="glass-container">
-        <header>
-            <h1>EmoBot 🤖</h1>
-            <div id="mood-badge" class="mood-badge">NORMAL</div>
-        </header>
-        <div class="chat-wrapper" id="chat-wrapper">
-            <div class="message assistant">
-                <div class="bubble">Hello! I am your emotional companion. How are you feeling today?</div>
+    <div class="glass-container main-layout">
+        <div class="chat-section">
+            <header>
+                <h1>EmoBot 🤖</h1>
+                <div id="mood-badge" class="mood-badge">NORMAL</div>
+            </header>
+            <div class="chat-wrapper" id="chat-wrapper">
+                <div class="message assistant">
+                    <div class="bubble">Hello! I am your emotional companion. How are you feeling today?</div>
+                </div>
+            </div>
+            <div class="input-area">
+                <input type="text" id="user-input" placeholder="Say something..." autocomplete="off">
+                <button id="send-btn">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
             </div>
         </div>
-        <div class="input-area">
-            <input type="text" id="user-input" placeholder="Say something..." autocomplete="off">
-            <button id="send-btn">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                  <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </button>
+        <div class="control-section">
+            <h3>Manual Controls</h3>
+            <h4>Modes & Settings</h4>
+            <div class="btn-grid">
+                <button onclick="control('mode', '2')">Robo Eyes</button>
+                <button onclick="control('mode', 'a')">Play Dog</button>
+                <button onclick="control('cmd', '+')">Bright +</button>
+                <button onclick="control('cmd', '-')">Bright -</button>
+                <button onclick="control('cmd', 'i')">Invert</button>
+            </div>
+            
+            <h4>Robo Moods</h4>
+            <div class="btn-grid moods">
+                <button onclick="control('mood', 'NORMAL')">Normal</button>
+                <button onclick="control('mood', 'HAPPY')">Happy</button>
+                <button onclick="control('mood', 'ANGRY')">Angry</button>
+                <button onclick="control('mood', 'SAD')">Sad</button>
+                <button onclick="control('mood', 'SUSPICIOUS')">Suspicious</button>
+                <button onclick="control('mood', 'JEALOUS')">Jealous</button>
+                <button onclick="control('mood', 'NAUGHTY')">Naughty</button>
+                <button onclick="control('mood', 'SICK')">Sick</button>
+                <button onclick="control('mood', 'SCARE')">Scare</button>
+                <button onclick="control('mood', 'ANNOYED')">Annoyed</button>
+                <button onclick="control('mood', 'WEATHER_SUN')">Sun</button>
+                <button onclick="control('mood', 'WEATHER_RAIN')">Rain</button>
+                <button onclick="control('mood', 'WEATHER_SNOW')">Snow</button>
+            </div>
         </div>
     </div>
     <script src="{{ url_for('static', filename='script.js') }}?v=3"></script>
