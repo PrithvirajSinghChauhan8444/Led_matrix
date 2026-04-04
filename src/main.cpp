@@ -3,6 +3,8 @@
 #include <SPI.h>
 #include <WiFi.h> // Changed for ESP32
 #include <time.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncTCP.h>
 
 // ==================== HARDWARE CONFIG ====================
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
@@ -22,6 +24,59 @@ const char* WIFI_PASS = "omaromar";
 const long  UTC_OFFSET = 19800;  // IST = UTC+5:30
 bool wifiConnected = false;
 
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+String networkText = "";
+
+const char INDEX_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LED Matrix Control Panel</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #1a1a2e; color: #fff; margin: 0; padding: 20px; }
+    h1 { color: #4ecca3; margin-bottom: 30px; }
+    h3 { color: #eeeeee; border-bottom: 1px solid #333; padding-bottom: 10px; max-width: 600px; margin: 20px auto; }
+    .btn { display: inline-block; padding: 12px 20px; font-size: 16px; font-weight: bold; cursor: pointer; 
+           text-align: center; outline: none; border: none; border-radius: 8px; margin: 8px; width: 140px; 
+           color: #1a1a2e; background-color: #4ecca3; box-shadow: 0 4px #3b9b7c; transition: all 0.1s ease; }
+    .btn:hover { background-color: #45b793; }
+    .btn:active { background-color: #3b9b7c; box-shadow: 0 1px #2a6f59; transform: translateY(3px); }
+    .sys-btn { background-color: #e94560; box-shadow: 0 4px #b8364a; color: white; }
+    .sys-btn:hover { background-color: #d13d56; }
+    .sys-btn:active { background-color: #b8364a; box-shadow: 0 1px #8f2a3a; transform: translateY(3px); }
+    .container { max-width: 800px; margin: 0 auto; }
+  </style>
+  <script>
+    function setMode(mode) { fetch('/mode?set=' + mode); }
+    function sendCmd(cmd) { fetch('/cmd?c=' + encodeURIComponent(cmd)); }
+  </script>
+</head>
+<body>
+  <div class="container">
+    <h1>LED Matrix Control Panel</h1>
+    
+    <h3>Animations</h3>
+    <button class="btn" onclick="setMode('0')">Shin Eyes</button>
+    <button class="btn" onclick="setMode('1')">Detailed Eyes</button>
+    <button class="btn" onclick="setMode('2')">Robo Eyes</button>
+    <button class="btn" onclick="setMode('3')">Slime Pet</button>
+    <button class="btn" onclick="setMode('7')">Morph Clock</button>
+    <button class="btn" onclick="setMode('a')">Playful Dog</button>
+    <button class="btn" onclick="setMode('e')">Dino Fight</button>
+    <button class="btn" style="background-color:#533483; color:#fff; box-shadow:0 4px #3d2661;" onclick="setMode('99')">Network Mode</button>
+    
+    <br><br>
+    <h3>Display Settings</h3>
+    <button class="btn sys-btn" onclick="sendCmd('+')">Brightness +</button>
+    <button class="btn sys-btn" onclick="sendCmd('-')">Brightness -</button>
+    <button class="btn sys-btn" onclick="sendCmd('i')">Invert LEDs</button>
+  </div>
+</body>
+</html>
+)rawliteral";
+
 // ==================== GLOBAL STATE ====================
 int  currentMode = 1;
 bool isInverse   = true;
@@ -35,11 +90,11 @@ int pX = 2, pY = 2;
 int eyeState = 0; // 0=Open, 1=Closing, 2=Closed, 3=Opening
 int eyeTimer = 0;
 
-// --- Car state ---
-int roadOff = 0;
-
-// --- Cat state ---
-int catX = 8, catState = 0, catTargetX = 5, catTimer = 0, catDir = 1, catAnimFrame = 0;
+// --- RoboEyes state ---
+int roboMood = 0;
+int roboTimer = 0;
+int roboBlinkPhase = 0; // 0=No blink, 1=Closing, 2=Closed, 3=Opening
+bool manualMood = false;
 
 // --- Shin-chan state ---
 int shinEmotion = 0, shinEmotionTimer = 0, shinBlinkTimer = 0;
@@ -48,18 +103,12 @@ bool shinIsBlinking = false;
 // --- Slime Pet state (Mode 3 / s) ---
 int slimeX = 15, slimeY = 7, slimeState = 0, slimeTimer = 0, slimeDir = 1, slimeAnim = 0;
 
-// --- Stickman Action (Mode 8) ---
-int gruntX = 15, gruntState = 0, gruntTimer = 0, gruntDir = 1, gruntFrame = 0;
-
 // --- Dino Fight (Mode 13 / e) ---
 struct DinoFighter { int x, state, timer, hp; };
 DinoFighter df1 = {3, 0, 0, 5};
 DinoFighter df2 = {28, 0, 0, 5};
 struct Fireball { int x, y, vx; bool active; int type; };
 Fireball fb = {0,0,0,false, 0};
-
-// --- Train state ---
-int trainX = 32;
 
 // --- Dog state ---
 int dogX = 12, dogTargetX = 12, dogState = 0, dogTimer = 0, dogAnimFrame = 0, dogDir = 1;
@@ -138,86 +187,113 @@ void animEyes() {
   drawEyes(20, pX - 2, pY - 2, blinkDraw);
 }
 
-// ==================== 2. CAR (Sleek Sports Car) ====================
-void drawCar(int x) {
-  for (int c = x; c < x + 14; c++) { mx.setPoint(4, c, !isInverse); mx.setPoint(5, c, !isInverse); }
-  for (int c = x + 4; c < x + 10; c++) mx.setPoint(3, c, !isInverse);
-  for (int c = x + 5; c < x + 9; c++) mx.setPoint(2, c, !isInverse);
-  mx.setPoint(3, x + 12, !isInverse);
-  mx.setPoint(4, x + 14, !isInverse);
-  mx.setPoint(2, x, !isInverse); mx.setPoint(1, x, !isInverse);
-  mx.setPoint(4, x + 14, flip ? !isInverse : isInverse);
-  mx.setPoint(4, x, flip ? !isInverse : isInverse);
-  mx.setPoint(6, x + 2, !isInverse); mx.setPoint(6, x + 3, !isInverse);
-  mx.setPoint(6, x + 10, !isInverse); mx.setPoint(6, x + 11, !isInverse);
-  if (flip) {
-    mx.setPoint(5, x + 2, isInverse); mx.setPoint(5, x + 11, isInverse); 
-  }
-}
-
-void animCar() {
-  roadOff = (roadOff + 1) % 4;
-  for (int c = 0; c < 32; c++) if ((c + roadOff) % 4 == 0) mx.setPoint(7, c, !isInverse);
-  drawCar(5);  
-}
-
-// ==================== 4. CAT ====================
-void drawCat(int x, int state, int frame, int dir) {
-  auto draw = [&](int r, int relC, bool on) {
-    int drawC = x + (relC * dir);
-    if (drawC >= 0 && drawC < 32 && r >= 0 && r < 8) 
-      mx.setPoint(r, drawC, on ? !isInverse : isInverse);
+// ==================== 2. ROBO EYES (FluxGarage style) ====================
+void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
+  auto draw = [&](int r, int c, bool on) {
+    if (r >= 0 && r < 8 && c >= 0 && c < 32) mx.setPoint(r, c, on ? !isInverse : isInverse);
   };
-  for(int r = 3; r <= 5; r++) for(int c = 4; c <= 7; c++) draw(r, c, true);
-  draw(2, 4, true); draw(2, 7, true); 
-  if (state == 2) { 
-    draw(4, 5, false); draw(4, 6, false); 
-  } else { draw(4, 6, false); }          
   
-  if (state == 0 || state == 2) { 
-    for(int r = 5; r <= 7; r++) for(int c = 0; c <= 4; c++) draw(r, c, true); 
-    draw(7, -1, true); draw(6, -1, true); draw(5, -2, true); 
-    draw(7, 4, false); 
-    if (state == 2) { 
-       if (frame % 4 < 2) draw(1, 8, true); else draw(0, 9, true); 
+  int height = 5;
+  int width = 4;
+  int rOffset = 1; // Default row offset
+  int cOffset = 1; // Default col offset
+
+  bool shape[8][6] = {false};
+  
+  if (mood == 6) { // NAUGHTY
+    if (isLeft) rOffset = 0; else rOffset = 2;
+  } else if (mood == 5) { // JEALOUS
+    if (isLeft) { cOffset = 2; }
+    else { height = 3; rOffset = 3; } // Right eye squinting low
+  }
+
+  // Draw base rectangle
+  for (int r = 0; r < height; r++) {
+    for (int c = 0; c < width; c++) {
+      if (r + rOffset < 8 && c + cOffset < 6) {
+        shape[r + rOffset][c + cOffset] = true;
+      }
     }
-  } else if (state == 1) { 
-    for(int r = 4; r <= 5; r++) for(int c = -1; c <= 4; c++) draw(r, c, true);
-    if (frame % 2 == 0) { draw(3, -2, true); draw(2, -2, true); }
-    else { draw(3, -3, true); draw(2, -3, true); }
-    if (frame % 2 == 0) { draw(6, -1, true); draw(7, -1, true); draw(6, 2, true); draw(7, 3, true); } 
-    else { draw(6, 0, true); draw(7, 0, true); draw(6, 3, true); draw(7, 2, true); }
-  } else if (state == 3) { 
-    for(int r = 4; r <= 5; r++) for(int c = -2; c <= 3; c++) draw(r, c, true);
-    draw(6, -1, true); draw(7, 0, true);
-    if (frame % 2 == 0) { draw(4, 8, true); draw(4, 9, true); }
-    else { draw(5, 8, true); draw(6, 9, true); }
-    draw(3, -3, true); draw(3, -4, true);
+  }
+
+  // Apply mood modifications
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 6; c++) {
+       if (!shape[r][c]) continue;
+       
+       if (mood == 1) { // HAPPY
+         if (r >= rOffset + 3) shape[r][c] = false;
+         if (r >= rOffset + 1 && c > cOffset && c < cOffset + width - 1) shape[r][c] = false; 
+       } else if (mood == 2) { // ANGRY
+         if (isLeft) {
+           if (r == rOffset && c >= cOffset + 2) shape[r][c] = false;
+           if (r == rOffset + 1 && c == cOffset + 3) shape[r][c] = false;
+         } else {
+           if (r == rOffset && c <= cOffset + 1) shape[r][c] = false;
+           if (r == rOffset + 1 && c == cOffset) shape[r][c] = false;
+         }
+       } else if (mood == 3) { // SAD/TIRED
+         if (isLeft) {
+           if (r == rOffset && c <= cOffset + 1) shape[r][c] = false;
+         } else {
+           if (r == rOffset && c >= cOffset + 2) shape[r][c] = false;
+         }
+         if (r >= rOffset + 4) shape[r][c] = false;
+       } else if (mood == 4) { // SUSPICIOUS
+         if (r <= rOffset + 1) shape[r][c] = false;
+       }
+    }
+  }
+
+  // Apply blink phase (Squint / Fully Closed)
+  if (blinkPhase == 1 || blinkPhase == 3) { // Squint
+    for (int r = 0; r < 8; r++) {
+       for (int c = 0; c < 6; c++) {
+         if (r <= rOffset || r >= rOffset + height - 1) shape[r][c] = false;
+       }
+    }
+  } else if (blinkPhase == 2) { // Fully closed
+    for (int r = 0; r < 8; r++) {
+       for (int c = 0; c < 6; c++) {
+         if (r != rOffset + height / 2) shape[r][c] = false;
+       }
+    }
+  }
+
+  // Draw final shape
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 6; c++) {
+      if (shape[r][c]) draw(r, startC + c, true);
+    }
   }
 }
 
-void animCat() {
-  catAnimFrame++;
-  if (catTimer <= 0) {
-    int next = random(0, 100);
-    if (next < 30) { catState = 1; catTargetX = random(3, 28); catTimer = random(30, 70); }
-    else if (next < 60) { catState = 0; catTimer = random(40, 80); } 
-    else if (next < 85) { catState = 2; catTimer = random(50, 100); } 
-    else { catState = 3; catTimer = 20; } 
+void animRoboEyes() {
+  if (roboBlinkPhase == 0) {
+    if (random(100) < 5) roboBlinkPhase = 1;
+  } else {
+    roboBlinkPhase++;
+    if (roboBlinkPhase > 3) roboBlinkPhase = 0;
   }
-  catTimer--;
   
-  if (catState == 1) {
-    if (catX < catTargetX) { catX++; catDir = 1; }
-    else if (catX > catTargetX) { catX--; catDir = -1; }
-    else catState = 0;
-  } else if (catState == 3) { 
-    if (catTimer % 5 == 0) {
-      if (catX > 15) catDir = -1; else if (catX < 10) catDir = 1;
-      catX += (catDir * 1);
+  if (!manualMood) {
+    if (roboTimer <= 0) {
+      int r = random(100);
+      if (r < 50) roboMood = 0;
+      else if (r < 60) roboMood = 1;
+      else if (r < 70) roboMood = 2;
+      else if (r < 80) roboMood = 3;
+      else if (r < 85) roboMood = 4;
+      else if (r < 92) roboMood = 5;
+      else roboMood = 6;
+      roboTimer = random(30, 100);
+    } else {
+      roboTimer--;
     }
   }
-  drawCat(catX, catState, catAnimFrame, catDir);
+
+  drawRoboEye(6, roboMood, roboBlinkPhase, true);  // Left eye
+  drawRoboEye(20, roboMood, roboBlinkPhase, false); // Right eye
 }
 
 // ==================== 3. SLIME PET (mode 3 / s) ====================
@@ -339,86 +415,6 @@ void animMorphClock() {
     for (int i = 0; i < 4; i++) { drawDigit(nd[i], cols[i], 0); prevDigits[i] = nd[i]; }
   }
   drawColon();
-}
-
-// ==================== 8. STICKMAN ACTION ====================
-void drawGrunt(int x, int frame, int dir, int state) {
-  auto draw = [&](int relR, int relC, bool on) {
-    int dc = x + (relC*dir); 
-    if(dc>=0 && dc<32 && relR>=0 && relR<8) mx.setPoint(relR, dc, on?!isInverse:isInverse);
-  };
-  
-  for(int c=-1;c<=1;c++) { draw(0,c,true); draw(4,c,true); }
-  draw(1,-2,true); draw(2,-2,true); draw(3,-2,true);
-  draw(1,2,true);  draw(2,2,true);  draw(3,2,true);
-  
-  for(int r=1;r<=3;r++) for(int c=-1;c<=1;c++) draw(r,c,true);
-
-  draw(1,0,false); 
-  draw(2,-1,false); draw(2,0,false); draw(2,1,false); 
-  draw(3,0,false);
-
-  if (state == 0) { 
-    draw(5,0,true); draw(6,0,true); 
-    if (frame%2==0) { draw(5, 2, true); draw(6, -2, true); }
-    else { draw(6, 2, true); draw(5, -2, true); }
-    if (frame%2==0) { draw(7,-1,true); draw(7,2,true); }
-    else { draw(7,1,true); draw(7,-2,true); }
-  } else if (state == 1) { 
-    draw(5,-1,true); draw(6,-2,true); 
-    draw(4, 3, true); draw(5, 3, true); 
-    draw(5,-3, true); 
-    draw(7,-2,true); draw(7,2,true); 
-  }
-}
-
-void animStickAction() {
-  gruntFrame++;
-  if (gruntTimer <= 0) {
-    int r = random(100);
-    if (r < 30) { gruntState = 1; gruntTimer = random(5, 15); }
-    else if (r < 60) { gruntState = 0; gruntTimer = random(20, 50); gruntDir = (random(2)==0)?1:-1; }
-    else { gruntState = 0; gruntTimer = random(20, 50); }
-  } else {
-    gruntTimer--;
-  }
-  
-  if (gruntState == 0 && gruntTimer % 2 == 0) {
-     if (random(10)>3) gruntX += gruntDir;
-  }
-  gruntX = constrain(gruntX, 3, 28);
-  
-  drawGrunt(gruntX, gruntFrame, gruntDir, gruntState);
-}
-
-// ==================== 9. LARGE BULLET TRAIN ====================
-void drawTrain(int x) {
-  auto draw = [&](int r, int c, bool on) {
-    if (c >= 0 && c < 32 && r >= 0 && r < 8) mx.setPoint(r, c, on ? !isInverse : isInverse);
-  };
-  for(int c=x; c<=x+31; c++) { draw(7, c, true); draw(6, c, true); }
-  draw(5, x+1, true); draw(5, x+2, true);
-  draw(4, x+2, true); draw(4, x+3, true);
-  draw(3, x+3, true); draw(3, x+4, true);
-  draw(2, x+4, true); draw(2, x+5, true);
-  draw(1, x+5, true); draw(1, x+6, true);
-  for(int c=x+6; c<=x+31; c++) draw(1, c, true);
-  for(int r=2; r<=5; r++) {
-    int startC = x + 6 - (r-1);
-    for(int c=startC; c<=x+31; c++) draw(r, c, true);
-  }
-  for(int c=x+7; c <= x+28; c++) {
-     if ((c-(x+7)) % 8 < 6) { draw(3, c, false); draw(4, c, false); }
-  }
-  draw(2, x+15, false); draw(3, x+15, false); draw(4, x+15, false); draw(5, x+15, false); 
-  draw(2, x+24, false); draw(3, x+24, false); draw(4, x+24, false); draw(5, x+24, false); 
-}
-
-void animTrain() {
-  for (int c = 0; c < 32; c++) if (c % 4 != 0) mx.setPoint(7, c, !isInverse);
-  drawTrain(trainX);
-  trainX -= 2;
-  if (trainX < -32) trainX = 32;
 }
 
 // ==================== 10. SHIN-CHAN EYES (mode 0) ====================
@@ -689,6 +685,43 @@ void animDinoFight() {
   drawDinoFighter(df2, false);
 }
 
+// ==================== NETWORK EVENT HANDLER ====================
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  if (type == WS_EVT_DATA) {
+    AwsFrameInfo *info = (AwsFrameInfo*)arg;
+    if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
+      data[len] = 0;
+      String msg = (char*)data;
+      if (msg.startsWith("cmd:mode:")) {
+        String modeStr = msg.substring(9);
+        if (modeStr == "0") currentMode = 0;
+        else if (modeStr == "1") currentMode = 1;
+        else if (modeStr == "2") currentMode = 2;
+        else if (modeStr == "3") currentMode = 3;
+        else if (modeStr == "7") currentMode = 7;
+        else if (modeStr == "a") currentMode = 12;
+        else if (modeStr == "e") currentMode = 13;
+        else if (modeStr == "99") currentMode = 99;
+      } else if (msg.startsWith("cmd:mood:")) {
+        String moodStr = msg.substring(9);
+        if (moodStr == "auto") manualMood = false;
+        else { roboMood = moodStr.toInt(); manualMood = true; currentMode = 2; }
+      } else {
+        networkText = msg;
+        currentMode = 99;
+      }
+    }
+  }
+}
+
+void animNetwork() {
+  // Simple indicator for network mode 99
+  if ((millis() / 500) % 2 == 0) {
+    mx.setPoint(0, 0, !isInverse);
+    mx.setPoint(0, 31, !isInverse);
+  }
+}
+
 // ==================== SETUP ====================
 void setup() {
   Serial.begin(115200);
@@ -711,33 +744,90 @@ void setup() {
     wifiConnected = true;
     configTime(UTC_OFFSET, 0, "pool.ntp.org", "time.nist.gov");
     Serial.println(" OK!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
     time_t now = time(nullptr);
     unsigned long ntpStart = millis();
     while (now < 100000 && millis() - ntpStart < 5000) { delay(300); now = time(nullptr); }
     Serial.println("NTP synced!");
+    
+    // Setup API
+    ws.onEvent(onWsEvent);
+    server.addHandler(&ws);
+    
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/html", INDEX_HTML);
+    });
+
+    server.on("/cmd", HTTP_GET, [](AsyncWebServerRequest *request){
+      if(request->hasParam("c")){
+        String cStr = request->getParam("c")->value();
+        if(cStr.length() > 0) {
+          char cmd = cStr.charAt(0);
+          if (cmd == 'i' || cmd == 'I') isInverse = !isInverse;
+          if (cmd == '+' || cmd == '=') { if (intensity < 15) intensity++; mx.control(MD_MAX72XX::INTENSITY, intensity); }
+          if (cmd == '-' || cmd == '_') { if (intensity > 0)  intensity--; mx.control(MD_MAX72XX::INTENSITY, intensity); }
+        }
+      }
+      request->send(200, "text/plain", "Command executed");
+    });
+    
+    server.on("/mood", HTTP_GET, [](AsyncWebServerRequest *request){
+      if(request->hasParam("set")){
+        String moodStr = request->getParam("set")->value();
+        if (moodStr == "auto") manualMood = false;
+        else { roboMood = moodStr.toInt(); manualMood = true; currentMode = 2; }
+      }
+      request->send(200, "text/plain", "Mood updated");
+    });
+
+    server.on("/mode", HTTP_GET, [](AsyncWebServerRequest *request){
+      if(request->hasParam("set")){
+        String modeStr = request->getParam("set")->value();
+        if (modeStr == "0") currentMode = 0;
+        else if (modeStr == "1") currentMode = 1;
+        else if (modeStr == "2") currentMode = 2;
+        else if (modeStr == "3") currentMode = 3;
+        else if (modeStr == "7") currentMode = 7;
+        else if (modeStr == "a") currentMode = 12;
+        else if (modeStr == "e") currentMode = 13;
+        else if (modeStr == "99") currentMode = 99;
+      }
+      request->send(200, "text/plain", "Mode updated");
+    });
+    
+    server.on("/text", HTTP_GET, [](AsyncWebServerRequest *request){
+      if(request->hasParam("msg")){
+        networkText = request->getParam("msg")->value();
+        currentMode = 99;
+      }
+      request->send(200, "text/plain", "Text updated");
+    });
+
+    server.begin();
+    Serial.println("Web Server running on port 80");
   } else {
     Serial.println(" SKIP (no WiFi — modes 7,8 limited)");
   }
   mx.clear();
 
   Serial.println("--- LED MATRIX CONTROLLER ---");
-  Serial.println("0:ShinEyes| 1:Eyes | 2:Car | 3/s:Slime | 4:Cat");
-  Serial.println("7:Clock | 8:Stickman | 9:BulletTrain | a:Dog | e:DinoFight");
+  Serial.println("0:ShinEyes| 1:Eyes | 2:RoboEyes | 3/s:Slime");
+  Serial.println("7:Clock | a:Dog | e:DinoFight");
   Serial.println("i:Inverse | +/-:Brightness");
 }
 
 // ==================== MAIN LOOP ====================
 void loop() {
+  if (wifiConnected) { ws.cleanupClients(); }
+
   if (Serial.available() > 0) {
     char cmd = Serial.read();
     if (cmd == '0') currentMode = 0;
     if (cmd == '1') currentMode = 1;
     if (cmd == '2') currentMode = 2;
     if (cmd == '3' || cmd == 's' || cmd == 'S') { currentMode = 3; slimeState = 0; slimeY = 7; }
-    if (cmd == '4') currentMode = 4;
     if (cmd == '7') currentMode = 7;
-    if (cmd == '8') { currentMode = 8; gruntX = 15; gruntState = 0; }
-    if (cmd == '9') { currentMode = 9; trainX = 32; }
     if (cmd == 'a' || cmd == 'A') { currentMode = 12; dogState = 0; ballX = -1; poopX = -1; }
     if (cmd == 'e' || cmd == 'E') { currentMode = 13; df1.state = 0; df2.state = 0; fb.active = false; df1.hp = 5; df2.hp = 5; }
     if (cmd == 'i' || cmd == 'I') isInverse = !isInverse;
@@ -756,14 +846,12 @@ void loop() {
   switch (currentMode) {
     case 0: animShinEyes();  break;
     case 1: animEyes();      break;
-    case 2: animCar();       break;
+    case 2: animRoboEyes();  break;
     case 3: animSlime();     break;
-    case 4: animCat();       break;
     case 7: animMorphClock();break;
-    case 8: animStickAction();break;
-    case 9: animTrain();     break;
     case 12: animDog();      break;
     case 13: animDinoFight();break;
+    case 99: animNetwork();  break;
   }
 
   mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
