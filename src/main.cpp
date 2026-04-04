@@ -205,14 +205,47 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
   } else if (mood == 5) { // JEALOUS
     if (isLeft) { cOffset = 2; }
     else { height = 3; rOffset = 3; } // Right eye squinting low
+  } else if (mood == 10) { // SICK (squint and shake)
+    height = 3; rOffset = 2; 
+    cOffset = 1 + ((millis() / 50) % 3) - 1; // Jitter wildly
+  } else if (mood == 12) { // ANNOYED (eye roll sequence)
+    int phase = (millis() / 150) % 8;
+    if (phase == 0) { rOffset = 1; cOffset = 1; }
+    else if (phase == 1) { rOffset = 0; cOffset = 1; }
+    else if (phase == 2) { rOffset = 0; cOffset = 2; }
+    else if (phase == 3) { rOffset = 0; cOffset = 2; }
+    else if (phase == 4) { rOffset = 1; cOffset = 2; }
+    else if (phase >= 5) { rOffset = 1; cOffset = 1; }
+  } else if (mood == 11) { // SCARE (jagged wide)
+    height = 6; width = 5; rOffset = 0; cOffset = 0;
   }
 
-  // Draw base rectangle
-  for (int r = 0; r < height; r++) {
-    for (int c = 0; c < width; c++) {
-      if (r + rOffset < 8 && c + cOffset < 6) {
-        shape[r + rOffset][c + cOffset] = true;
+  // Draw base rectangle IF not weather
+  if (mood < 7 || mood >= 10) {
+    for (int r = 0; r < height; r++) {
+      for (int c = 0; c < width; c++) {
+        if (r + rOffset < 8 && c + cOffset < 6) {
+          shape[r + rOffset][c + cOffset] = true;
+        }
       }
+    }
+  } else {
+     // WEATHER ICONS
+     if (mood == 7) { // SUN
+      shape[1][2]=true;
+      shape[2][1]=true; shape[2][2]=true; shape[2][3]=true;
+      shape[3][0]=true; shape[3][1]=true; shape[3][2]=true; shape[3][3]=true; shape[3][4]=true;
+      shape[4][1]=true; shape[4][2]=true; shape[4][3]=true;
+      shape[5][2]=true;
+    } else if (mood == 8) { // RAIN CLOUDS
+      shape[2][1]=true; shape[2][2]=true; shape[2][3]=true;
+      shape[3][0]=true; shape[3][1]=true; shape[3][2]=true; shape[3][3]=true; shape[3][4]=true;
+      if ((millis() / 150) % 2 == 0) { shape[5][0]=true; shape[6][2]=true; shape[5][4]=true; }
+      else                           { shape[6][0]=true; shape[5][2]=true; shape[6][4]=true; }
+    } else if (mood == 9) { // SNOW
+      shape[1][2]=true; shape[3][0]=true; shape[3][4]=true; shape[5][2]=true; 
+      shape[2][2]=true; shape[3][2]=true; shape[4][2]=true;
+      shape[2][1]=true; shape[2][3]=true; shape[4][1]=true; shape[4][3]=true;
     }
   }
 
@@ -241,22 +274,28 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
          if (r >= rOffset + 4) shape[r][c] = false;
        } else if (mood == 4) { // SUSPICIOUS
          if (r <= rOffset + 1) shape[r][c] = false;
+       } else if (mood == 11) { // SCARE
+         if (r == 0 && (c == 0 || c == 2 || c == 4)) shape[r][c] = false;
+         if (r == 5 && (c == 1 || c == 3)) shape[r][c] = false;
+         if ((millis()/50)%2 == 0 && r == 2 && c == 2) shape[r][c] = false; 
        }
     }
   }
 
-  // Apply blink phase (Squint / Fully Closed)
-  if (blinkPhase == 1 || blinkPhase == 3) { // Squint
-    for (int r = 0; r < 8; r++) {
-       for (int c = 0; c < 6; c++) {
-         if (r <= rOffset || r >= rOffset + height - 1) shape[r][c] = false;
-       }
-    }
-  } else if (blinkPhase == 2) { // Fully closed
-    for (int r = 0; r < 8; r++) {
-       for (int c = 0; c < 6; c++) {
-         if (r != rOffset + height / 2) shape[r][c] = false;
-       }
+  // Apply blink phase (Squint / Fully Closed) - Skip blinks for weather
+  if (mood < 7 || mood >= 10) {
+    if (blinkPhase == 1 || blinkPhase == 3) { // Squint
+      for (int r = 0; r < 8; r++) {
+         for (int c = 0; c < 6; c++) {
+           if (r <= rOffset || r >= rOffset + height - 1) shape[r][c] = false;
+         }
+      }
+    } else if (blinkPhase == 2) { // Fully closed
+      for (int r = 0; r < 8; r++) {
+         for (int c = 0; c < 6; c++) {
+           if (r != rOffset + height / 2) shape[r][c] = false;
+         }
+      }
     }
   }
 

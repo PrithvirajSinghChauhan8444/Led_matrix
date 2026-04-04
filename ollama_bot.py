@@ -17,17 +17,23 @@ MOOD_MAP = {
     "SUSPICIOUS": 4,
     "JEALOUS": 5,
     "NAUGHTY": 6,
+    "WEATHER_SUN": 7,
+    "WEATHER_RAIN": 8,
+    "WEATHER_SNOW": 9,
+    "SICK": 10,
+    "SCARE": 11,
+    "ANNOYED": 12,
     "SLEEP": 3 # Re-use sad/tired for sleep
 }
 
 SYSTEM_PROMPT = """You are a helpful, emotional AI assistant inside a physical robot.
 Before you write ANY text in your response, you MUST output your current emotion in square brackets.
-The strictly allowed emotions are: [NORMAL], [HAPPY], [ANGRY], [SAD], [SUSPICIOUS], [JEALOUS], [NAUGHTY].
+The strictly allowed emotions are: [NORMAL], [HAPPY], [ANGRY], [SAD], [SUSPICIOUS], [JEALOUS], [NAUGHTY], [SICK], [SCARE], [ANNOYED], [WEATHER_SUN], [WEATHER_RAIN], [WEATHER_SNOW].
 For example:
 [HAPPY] I would love to help you with that!
-[SUSPICIOUS] Are you sure that is a safe thing to do?
-[NAUGHTY] Hehe, I shouldn't... but I will!
-[JEALOUS] Why do they get to do it and not me?
+[SUSPICIOUS] Are you sure that is a safe thing to do!
+[WEATHER_RAIN] Looks like it is pouring outside, maybe grab an umbrella!
+[ANNOYED] Ugh, why do I have to do everything around here?
 
 Do not include any other brackets. Start your response immediately with the emotion tag.
 """
