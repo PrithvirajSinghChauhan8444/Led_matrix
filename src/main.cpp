@@ -85,6 +85,7 @@ int roboMood = 0;
 int roboTimer = 0;
 int roboBlinkPhase = 0; // 0=No blink, 1=Closing, 2=Closed, 3=Opening
 bool manualMood = false;
+int roboEyeX = 0, roboEyeY = 0, roboMoveTimer = 0;
 
 // --- Dog state ---
 int dogX = 12, dogTargetX = 12, dogState = 0, dogTimer = 0, dogAnimFrame = 0, dogDir = 1;
@@ -205,7 +206,7 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
   // Draw final shape
   for (int r = 0; r < 8; r++) {
     for (int c = 0; c < 6; c++) {
-      if (shape[r][c]) draw(r, startC + c, true);
+      if (shape[r][c]) draw(r + roboEyeY, startC + c + roboEyeX, true);
     }
   }
 }
@@ -220,18 +221,29 @@ void animRoboEyes() {
   
   if (!manualMood) {
     if (roboTimer <= 0) {
-      int r = random(100);
-      if (r < 50) roboMood = 0;
-      else if (r < 60) roboMood = 1;
-      else if (r < 70) roboMood = 2;
-      else if (r < 80) roboMood = 3;
-      else if (r < 85) roboMood = 4;
-      else if (r < 92) roboMood = 5;
-      else roboMood = 6;
+      roboMood = random(0, 13);
       roboTimer = random(30, 100);
     } else {
       roboTimer--;
     }
+  }
+
+  if (roboMoveTimer <= 0) {
+    if (roboMood < 7 || roboMood >= 10) { 
+      if (random(100) < 60) {
+        roboEyeX = 0; roboEyeY = 0;
+        roboMoveTimer = random(20, 50);
+      } else {
+        roboEyeX = random(-2, 3);
+        roboEyeY = random(-1, 2);
+        roboMoveTimer = random(10, 30);
+      }
+    } else {
+      roboEyeX = 0; roboEyeY = 0;
+      roboMoveTimer = 10;
+    }
+  } else {
+    roboMoveTimer--;
   }
 
   drawRoboEye(6, roboMood, roboBlinkPhase, true);  // Left eye
