@@ -58,6 +58,10 @@ def chat():
         
         try:
             with requests.post(OLLAMA_URL, json=payload, stream=True) as r:
+                if r.status_code != 200:
+                    yield f"data: {json.dumps({'type': 'error', 'content': f'API Error {r.status_code}: {r.text}'})}\n\n"
+                    return
+
                 for line in r.iter_lines():
                     if line:
                         chunk_data = json.loads(line)
@@ -75,6 +79,10 @@ def chat():
                                     text_after = tag_buffer[match.end():]
                                     if text_after:
                                         yield f"data: {json.dumps({'type': 'text', 'content': text_after.lstrip()})}\n\n"
+                                tag_found = True
+                            elif len(tag_buffer) > 25:
+                                # The AI probably forgot the tag! Fallback to standard output.
+                                yield f"data: {json.dumps({'type': 'text', 'content': tag_buffer})}\n\n"
                                 tag_found = True
                         else:
                             yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"

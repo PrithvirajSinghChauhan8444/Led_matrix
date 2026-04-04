@@ -42,6 +42,11 @@ async function sendMessage() {
     // Create assistant placeholder
     const bubble = appendMessage('assistant', '<span class="blink-cursor"></span>');
     
+    // Disable input while thinking
+    userInput.disabled = true;
+    sendBtn.disabled = true;
+    userInput.placeholder = "AI is thinking...";
+    
     try {
         const response = await fetch('/chat', {
             method: 'POST',
@@ -52,18 +57,26 @@ async function sendMessage() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let assistantReply = "";
+        let buffer = "";
         
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n\n');
             
-            for (let line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.substring(6);
+            buffer += decoder.decode(value, { stream: true });
+            
+            let boundary;
+            // Handle both \n\n and \r\n\r\n just in case
+            while (buffer.includes('\n\n')) {
+                boundary = buffer.indexOf('\n\n');
+                let message = buffer.slice(0, boundary).trim();
+                buffer = buffer.slice(boundary + 2);
+                
+                if (message.startsWith('data: ')) {
+                    const dataStr = message.substring(6);
                     try {
                         const data = JSON.parse(dataStr);
+                        console.log("Received data:", data);
                         if (data.type === 'tag') {
                             updateMood(data.content);
                         } else if (data.type === 'text') {
@@ -72,9 +85,11 @@ async function sendMessage() {
                             chatWrapper.scrollTop = chatWrapper.scrollHeight;
                         } else if (data.type === 'done') {
                             setTimeout(() => updateMood("NORMAL"), 3000);
+                        } else if (data.type === 'error') {
+                            bubble.innerHTML = "<em>Error: " + data.content + "</em>";
                         }
                     } catch (e) {
-                         // ignore incomplete json chunk or empty
+                         // ignore incomplete json
                     }
                 }
             }
@@ -82,10 +97,18 @@ async function sendMessage() {
         
         // Finalize UI
         bubble.innerHTML = assistantReply;
-        messages.push({ role: "assistant", content: assistantReply });
+        if (assistantReply) {
+             messages.push({ role: "assistant", content: assistantReply });
+        }
         
     } catch (error) {
-        bubble.innerHTML = "<em>Error connecting to AI.</em>";
+        bubble.innerHTML = "<em>Error connecting to AI. Make sure Ollama is running!</em>";
+    } finally {
+        // Re-enable input
+        userInput.disabled = false;
+        sendBtn.disabled = false;
+        userInput.placeholder = "Say something...";
+        userInput.focus();
     }
 }
 
