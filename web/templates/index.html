@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emotional Companion AI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="circles">
+        <div class="circle circle-1"></div>
+        <div class="circle circle-2"></div>
+        <div class="circle circle-3"></div>
+    </div>
+    <div class="glass-container">
+        <header>
+            <h1>EmoBot 🤖</h1>
+            <div id="mood-badge" class="mood-badge">NORMAL</div>
+        </header>
+        <div class="chat-wrapper" id="chat-wrapper">
+            <div class="message assistant">
+                <div class="bubble">Hello! I am your emotional companion. How are you feeling today?</div>
+            </div>
+        </div>
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Say something..." autocomplete="off">
+            <button id="send-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
