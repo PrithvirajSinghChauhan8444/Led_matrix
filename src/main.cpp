@@ -1,15 +1,20 @@
 #include <Arduino.h>
 #include <MD_MAX72xx.h>
 #include <SPI.h>
-#include <ESP8266WiFi.h>
+#include <WiFi.h> // Changed for ESP32
 #include <time.h>
 
 // ==================== HARDWARE CONFIG ====================
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES 4
-#define CS_PIN 15
 
-MD_MAX72XX mx = MD_MAX72XX(HARDWARE_TYPE, CS_PIN, MAX_DEVICES);
+// Custom one-sided ESP32 pins
+#define DATA_PIN 13  // D13 on the board
+#define CLK_PIN  14  // D14 on the board
+#define CS_PIN   27  // D27 on the board
+
+// Custom software SPI constructor
+MD_MAX72XX mx = MD_MAX72XX(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 
 // ==================== WiFi CONFIG ====================
 const char* WIFI_SSID = "OhhMarr";
@@ -27,6 +32,8 @@ bool flip        = false;
 
 // --- Eyes state ---
 int pX = 2, pY = 2;
+int eyeState = 0; // 0=Open, 1=Closing, 2=Closed, 3=Opening
+int eyeTimer = 0;
 
 // --- Car state ---
 int roadOff = 0;
@@ -86,41 +93,72 @@ void drawEyes(int startC, int offsetX, int offsetY, int blink) {
 }
 
 void animEyes() {
-  if (random(20) > 18) { pX = random(1, 4); pY = random(1, 4); }
-  drawEyes(6,  pX - 2, pY - 2, (random(50) > 48) ? 1 : 0);
-  drawEyes(20, pX - 2, pY - 2, (random(50) > 48) ? 1 : 0);
+  // 1. Handle State Transitions
+  if (eyeTimer <= 0) {
+    if (eyeState == 0) { 
+      // Currently open. Pick next action: Blink, Move, or Idle.
+      int r = random(100);
+      if (r < 15) { 
+        eyeState = 1;     // Start blink sequence
+        eyeTimer = 1;     // Squint for 1 frame (~80ms)
+      } else if (r < 40) {
+        pX = random(1, 4); // Pick new direction
+        pY = random(1, 4);
+        eyeTimer = random(10, 25); // Stare in new direction for 0.8s to 2s
+      } else {
+        eyeTimer = random(5, 10); // Just idle and hold current stare
+      }
+    } 
+    else if (eyeState == 1) { // Was squinting closed
+      eyeState = 2; 
+      eyeTimer = 1; // Fully closed for 1 frame
+    } 
+    else if (eyeState == 2) { // Was fully closed
+      eyeState = 3; 
+      eyeTimer = 1; // Squint opening for 1 frame
+    } 
+    else if (eyeState == 3) { // Was squinting open
+      eyeState = 0; 
+      // THE FIX: The Recovery Pause! 
+      // Force the eyes to stay open and stare in the original direction 
+      // for at least 4-10 frames before allowing a new movement.
+      eyeTimer = random(4, 10); 
+    }
+  } else {
+    eyeTimer--;
+  }
+
+  // 2. Map the current state to the drawing variable
+  int blinkDraw = 0; // Default wide open
+  if (eyeState == 1 || eyeState == 3) blinkDraw = 1; // Squinting
+  else if (eyeState == 2) blinkDraw = 2;             // Fully closed
+
+  // 3. Draw both eyes
+  drawEyes(6,  pX - 2, pY - 2, blinkDraw);
+  drawEyes(20, pX - 2, pY - 2, blinkDraw);
 }
 
 // ==================== 2. CAR (Sleek Sports Car) ====================
 void drawCar(int x) {
-  // Body — wide low profile (row 4-5, 14px wide)
   for (int c = x; c < x + 14; c++) { mx.setPoint(4, c, !isInverse); mx.setPoint(5, c, !isInverse); }
-  // Cabin — angled windshield look (row 2-3)
-  for (int c = x + 4; c < x + 10; c++) mx.setPoint(3, c, !isInverse);  // lower cabin
-  for (int c = x + 5; c < x + 9; c++) mx.setPoint(2, c, !isInverse);   // upper cabin (narrower = angled)
-  // Hood scoop
+  for (int c = x + 4; c < x + 10; c++) mx.setPoint(3, c, !isInverse);
+  for (int c = x + 5; c < x + 9; c++) mx.setPoint(2, c, !isInverse);
   mx.setPoint(3, x + 12, !isInverse);
-  // Front bumper detail
   mx.setPoint(4, x + 14, !isInverse);
-  // Rear spoiler
   mx.setPoint(2, x, !isInverse); mx.setPoint(1, x, !isInverse);
-  // Headlight
   mx.setPoint(4, x + 14, flip ? !isInverse : isInverse);
-  // Taillight
   mx.setPoint(4, x, flip ? !isInverse : isInverse);
-  // Wheels — bigger, spinning
   mx.setPoint(6, x + 2, !isInverse); mx.setPoint(6, x + 3, !isInverse);
   mx.setPoint(6, x + 10, !isInverse); mx.setPoint(6, x + 11, !isInverse);
-  // Wheel spin effect
   if (flip) {
-    mx.setPoint(5, x + 2, isInverse); mx.setPoint(5, x + 11, isInverse);  // tire gap flicker
+    mx.setPoint(5, x + 2, isInverse); mx.setPoint(5, x + 11, isInverse); 
   }
 }
 
 void animCar() {
   roadOff = (roadOff + 1) % 4;
   for (int c = 0; c < 32; c++) if ((c + roadOff) % 4 == 0) mx.setPoint(7, c, !isInverse);
-  drawCar(5);  // centered on 32-col display
+  drawCar(5);  
 }
 
 // ==================== 4. CAT ====================
@@ -131,25 +169,25 @@ void drawCat(int x, int state, int frame, int dir) {
       mx.setPoint(r, drawC, on ? !isInverse : isInverse);
   };
   for(int r = 3; r <= 5; r++) for(int c = 4; c <= 7; c++) draw(r, c, true);
-  draw(2, 4, true); draw(2, 7, true); // Ears
+  draw(2, 4, true); draw(2, 7, true); 
   if (state == 2) { 
-    draw(4, 5, false); draw(4, 6, false); // closed eyes
-  } else { draw(4, 6, false); }          // open eye
+    draw(4, 5, false); draw(4, 6, false); 
+  } else { draw(4, 6, false); }          
   
   if (state == 0 || state == 2) { 
-    for(int r = 5; r <= 7; r++) for(int c = 0; c <= 4; c++) draw(r, c, true); // Shortened body
-    draw(7, -1, true); draw(6, -1, true); draw(5, -2, true); // Tail wrapped
-    draw(7, 4, false); // paw notch
-    if (state == 2) { // Sleep bubble
+    for(int r = 5; r <= 7; r++) for(int c = 0; c <= 4; c++) draw(r, c, true); 
+    draw(7, -1, true); draw(6, -1, true); draw(5, -2, true); 
+    draw(7, 4, false); 
+    if (state == 2) { 
        if (frame % 4 < 2) draw(1, 8, true); else draw(0, 9, true); 
     }
-  } else if (state == 1) { // Walk
+  } else if (state == 1) { 
     for(int r = 4; r <= 5; r++) for(int c = -1; c <= 4; c++) draw(r, c, true);
     if (frame % 2 == 0) { draw(3, -2, true); draw(2, -2, true); }
     else { draw(3, -3, true); draw(2, -3, true); }
     if (frame % 2 == 0) { draw(6, -1, true); draw(7, -1, true); draw(6, 2, true); draw(7, 3, true); } 
     else { draw(6, 0, true); draw(7, 0, true); draw(6, 3, true); draw(7, 2, true); }
-  } else if (state == 3) { // Pounce
+  } else if (state == 3) { 
     for(int r = 4; r <= 5; r++) for(int c = -2; c <= 3; c++) draw(r, c, true);
     draw(6, -1, true); draw(7, 0, true);
     if (frame % 2 == 0) { draw(4, 8, true); draw(4, 9, true); }
@@ -173,7 +211,7 @@ void animCat() {
     if (catX < catTargetX) { catX++; catDir = 1; }
     else if (catX > catTargetX) { catX--; catDir = -1; }
     else catState = 0;
-  } else if (catState == 3) { // leap
+  } else if (catState == 3) { 
     if (catTimer % 5 == 0) {
       if (catX > 15) catDir = -1; else if (catX < 10) catDir = 1;
       catX += (catDir * 1);
@@ -188,34 +226,30 @@ void drawSlime(int x, int y, int state, int frame) {
     if (c >= 0 && c < 32 && r >= 0 && r < 8) mx.setPoint(r, c, on ? !isInverse : isInverse);
   };
   
-  if (state == 0) { // Idle (still)
+  if (state == 0) { 
     draw(y, x-4, true); draw(y, x+4, true);
     for(int c=x-3; c<=x+3; c++) { draw(y, c, true); draw(y-1, c, true); }
     for(int c=x-2; c<=x+2; c++) { draw(y-2, c, true); draw(y-3, c, true); }
     for(int c=x-1; c<=x+1; c++) { draw(y-4, c, true); }
     
-    // Cheeks
     draw(y-1, x-3, false); draw(y-1, x+3, false);
-    // Eyes: Blink Occasionally
-    if (frame % 40 < 4) { // Blinking
+    if (frame % 40 < 4) { 
        draw(y-2, x-2, false); draw(y-2, x+2, false);
-    } else { // Open ^ ^
+    } else { 
        draw(y-2, x-2, false); draw(y-2, x+2, false);
        draw(y-3, x-1, false); draw(y-3, x+1, false);
     }
-  } else if (state == 1 || state == 3) { // Squash
+  } else if (state == 1 || state == 3) { 
     draw(y, x-5, true); draw(y, x+5, true); 
     for(int c=x-4; c<=x+4; c++) { draw(y, c, true); draw(y-1, c, true); }
     for(int c=x-3; c<=x+3; c++) draw(y-2, c, true);
     for(int c=x-1; c<=x+1; c++) draw(y-3, c, true);
-    // Eyes squinting
     draw(y-1, x-2, false); draw(y-1, x+2, false);
-  } else if (state == 2) { // Stretch (Air)
+  } else if (state == 2) { 
     draw(y, x-2, true); draw(y, x+2, true);
     for(int c=x-1; c<=x+1; c++) { draw(y, c, true); draw(y-1, c, true); }
     for(int c=x-2; c<=x+2; c++) { draw(y-2, c, true); draw(y-3, c, true); draw(y-4, c, true); }
     draw(y-5, x-1, true); draw(y-5, x, true); draw(y-5, x+1, true);
-    // Eyes open
     draw(y-3, x-1, false); draw(y-3, x+1, false);
   }
 }
@@ -236,7 +270,7 @@ void animSlime() {
     }
   } else { slimeTimer--; }
 
-  if (slimeState == 2) { // Air physics
+  if (slimeState == 2) { 
     int phase = 10 - slimeTimer; 
     if (phase < 5) slimeY--; else slimeY++;
     slimeX += slimeDir;
@@ -253,14 +287,14 @@ void drawDigit(int digit, int startCol, int yOff) {
     for (int row = 0; row < 5; row++) {
       int dr = row + 1 + yOff;
       if (dr >= 0 && dr < 8 && ((d >> row) & 1))
-        mx.setPoint(dr, 31 - (startCol + col), !isInverse);  // mirror X
+        mx.setPoint(dr, 31 - (startCol + col), !isInverse);  
     }
   }
 }
 
 void drawColon() {
   if ((millis() / 500) % 2 == 0) {
-    mx.setPoint(2, 31 - 16, !isInverse);  // mirror → screen col 15 (centered)
+    mx.setPoint(2, 31 - 16, !isInverse);  
     mx.setPoint(5, 31 - 16, !isInverse);
   }
 }
@@ -273,14 +307,13 @@ void getTimeHM(int* h, int* m) {
 
 void animMorphClock() {
   if (!wifiConnected) {
-    // No WiFi — show "noWF" as scrolling hint
     for (int c = 4; c < 28; c += 2) mx.setPoint(4, c, !isInverse);
     return;
   }
   int h, m;
   getTimeHM(&h, &m);
   int nd[4] = { h/10, h%10, m/10, m%10 };
-  int cols[4] = { 5, 10, 19, 24 };  // mirrored + centered positions
+  int cols[4] = { 5, 10, 19, 24 };  
 
   if (!morphing) {
     for (int i = 0; i < 4; i++) {
@@ -315,33 +348,27 @@ void drawGrunt(int x, int frame, int dir, int state) {
     if(dc>=0 && dc<32 && relR>=0 && relR<8) mx.setPoint(relR, dc, on?!isInverse:isInverse);
   };
   
-  // Head Outline (5x5)
   for(int c=-1;c<=1;c++) { draw(0,c,true); draw(4,c,true); }
   draw(1,-2,true); draw(2,-2,true); draw(3,-2,true);
   draw(1,2,true);  draw(2,2,true);  draw(3,2,true);
   
-  // Fill face
   for(int r=1;r<=3;r++) for(int c=-1;c<=1;c++) draw(r,c,true);
 
-  // The White Cross (+)
   draw(1,0,false); 
   draw(2,-1,false); draw(2,0,false); draw(2,1,false); 
   draw(3,0,false);
 
-  // Body
-  if (state == 0) { // Idle/Walk
+  if (state == 0) { 
     draw(5,0,true); draw(6,0,true); 
-    // Floating hands 
     if (frame%2==0) { draw(5, 2, true); draw(6, -2, true); }
     else { draw(6, 2, true); draw(5, -2, true); }
-    // Feet
     if (frame%2==0) { draw(7,-1,true); draw(7,2,true); }
     else { draw(7,1,true); draw(7,-2,true); }
-  } else if (state == 1) { // Action
-    draw(5,-1,true); draw(6,-2,true); // leaning
-    draw(4, 3, true); draw(5, 3, true); // Extended hand punch
-    draw(5,-3, true); // Other hand
-    draw(7,-2,true); draw(7,2,true); // Feet braced
+  } else if (state == 1) { 
+    draw(5,-1,true); draw(6,-2,true); 
+    draw(4, 3, true); draw(5, 3, true); 
+    draw(5,-3, true); 
+    draw(7,-2,true); draw(7,2,true); 
   }
 }
 
@@ -369,25 +396,20 @@ void drawTrain(int x) {
   auto draw = [&](int r, int c, bool on) {
     if (c >= 0 && c < 32 && r >= 0 && r < 8) mx.setPoint(r, c, on ? !isInverse : isInverse);
   };
-  // Base
   for(int c=x; c<=x+31; c++) { draw(7, c, true); draw(6, c, true); }
-  // Slanted nose
   draw(5, x+1, true); draw(5, x+2, true);
   draw(4, x+2, true); draw(4, x+3, true);
   draw(3, x+3, true); draw(3, x+4, true);
   draw(2, x+4, true); draw(2, x+5, true);
   draw(1, x+5, true); draw(1, x+6, true);
-  // Roof & Fill
   for(int c=x+6; c<=x+31; c++) draw(1, c, true);
   for(int r=2; r<=5; r++) {
     int startC = x + 6 - (r-1);
     for(int c=startC; c<=x+31; c++) draw(r, c, true);
   }
-  // Panoramic windows
   for(int c=x+7; c <= x+28; c++) {
      if ((c-(x+7)) % 8 < 6) { draw(3, c, false); draw(4, c, false); }
   }
-  // Double Doors
   draw(2, x+15, false); draw(3, x+15, false); draw(4, x+15, false); draw(5, x+15, false); 
   draw(2, x+24, false); draw(3, x+24, false); draw(4, x+24, false); draw(5, x+24, false); 
 }
@@ -485,10 +507,6 @@ void animShinEyes() {
   drawMouth(shinEmotion, offX, offY);
 }
 
-// (Shin Dance removed)
-
-// (animShinDance removed)
-
 // ==================== 12. DOG REDESIGN (mode a) ====================
 void drawDog(int x, int state, int frame, int dir) {
   auto draw = [&](int r, int relC, bool on) {
@@ -498,10 +516,10 @@ void drawDog(int x, int state, int frame, int dir) {
   
   // Head
   draw(3, 5, true); draw(3, 6, true); draw(3, 7, true);
-  draw(4, 5, true); draw(4, 6, true); draw(4, 7, true); draw(4, 8, true); // snout
-  draw(2, 6, true); // Floppy ear root
-  draw(3, 8, false); // eye
-  if (state == 0 && frame % 2 == 0) draw(5, 8, true); // pant tongue
+  draw(4, 5, true); draw(4, 6, true); draw(4, 7, true); draw(4, 8, true); 
+  draw(2, 6, true); 
+  draw(3, 8, false); 
+  if (state == 0 && frame % 2 == 0) draw(5, 8, true); 
   
   // Floppy ear
   if (frame % 2 == 0) { draw(3, 4, true); draw(4, 4, true); }
@@ -511,25 +529,25 @@ void drawDog(int x, int state, int frame, int dir) {
   for(int r=5; r<=6; r++) for(int c=1; c<=6; c++) draw(r, c, true);
   
   // Tail
-  if (state == 0 || state == 2 || state == 4) { // Wagging
+  if (state == 0 || state == 2 || state == 4) { 
     if (frame % 2 == 0) { draw(3, 0, true); draw(4, 0, true); }
     else                { draw(4, 0, true); draw(5, -1, true); }
   } else { draw(4, 0, true); }
 
   // Legs & Context
-  if (state == 0) { // Sit
+  if (state == 0) { 
     draw(6, 1, false); draw(7, 2, true); draw(7, 5, true); draw(7, 6, true);
-  } else if (state == 1) { // walk
+  } else if (state == 1) { 
     if (frame % 2 == 0) { draw(7, 2, true); draw(7, 5, true); }
     else { draw(7, 1, true); draw(7, 6, true); }
-  } else if (state == 4) { // sleep
+  } else if (state == 4) { 
     draw(6, 1, false); draw(7, 2, true); draw(7, 5, true);
     if (frame % 4 < 2) draw(1, 9, true); else draw(0, 10, true);
-  } else if (state == 5) { // dig
+  } else if (state == 5) { 
     draw(7, 1, true); draw(7, 3, true); 
     if (frame % 2 == 0) { draw(6, 9, true); draw(7, 10, true); }
     else { draw(5, 10, true); draw(7, 9, true); }
-  } else { // Play/Poop
+  } else { 
     draw(7, 2, true); draw(7, 5, true);
   }
 }
@@ -592,33 +610,30 @@ void drawDinoFighter(DinoFighter &d, bool isLeft) {
     if(dc>=0 && dc<32 && relR>=0 && relR<8) mx.setPoint(relR, dc, on?!isInverse:isInverse);
   };
   
-  if (d.state == 4) { // Gravestone
-    for(int c=-1; c<=1; c++) { draw(4,c,true); draw(5,c,true); draw(6,c,true); } // grave shape
-    draw(3,0,true); // rounded top
-    for(int c=-2; c<=2; c++) draw(7,c,true); // base
-    draw(5,0,false); draw(5,-1,false); draw(5,1,false); draw(4,0,false); draw(6,0,false); // cross indent
+  if (d.state == 4) { 
+    for(int c=-1; c<=1; c++) { draw(4,c,true); draw(5,c,true); draw(6,c,true); } 
+    draw(3,0,true); 
+    for(int c=-2; c<=2; c++) draw(7,c,true); 
+    draw(5,0,false); draw(5,-1,false); draw(5,1,false); draw(4,0,false); draw(6,0,false); 
     return;
   }
   
-  if (d.state == 2) { // Ducking
+  if (d.state == 2) { 
     for (int c=0; c<=3; c++) { draw(4,c,true); draw(5,c,true); }
     draw(5,4,true); draw(6,4,true); draw(7,1,true); draw(7,3,true);
-    // Head ducked forward (with full flat snout)
     draw(4,4,true); draw(4,5,true); draw(4,6,true);
     draw(5,5,true); draw(5,6,true);
   } else {
-    // Normal standing (or Winning state=5)
-    for(int c=1; c<=5; c++) { draw(0,c,true); draw(1,c,true); draw(2,c,true); } // flat full snout
-    draw(1,2,false); // eye
-    if (d.state == 1 || d.state == 3) { draw(3,4,true); draw(3,5,true); } // open mouth
+    for(int c=1; c<=5; c++) { draw(0,c,true); draw(1,c,true); draw(2,c,true); } 
+    draw(1,2,false); 
+    if (d.state == 1 || d.state == 3) { draw(3,4,true); draw(3,5,true); } 
     else { for (int c=1; c<=5; c++) draw(3,c,true); } 
     
-    // Body
     draw(4,-3,true); 
     for(int c=-2; c<=4; c++) draw(4,c,true);
     for(int c=-2; c<=3; c++) draw(5,c,true);
     for(int c=-1; c<=2; c++) draw(6,c,true);
-    draw(7,0,true); draw(7,2,true); // legs
+    draw(7,0,true); draw(7,2,true); 
   }
 }
 
@@ -631,15 +646,14 @@ void animDinoFight() {
             mx.setPoint(fb.y + i, fb.x, !isInverse);
     }
     
-    // Collision
     if (fb.vx > 0 && fb.x >= df2.x - 2) {
       if (df2.state != 2 && df2.state != 4) {
-        df2.hp--; if (df2.hp <= 0) { df2.state = 4; df1.state = 5; } // Dead & Win
+        df2.hp--; if (df2.hp <= 0) { df2.state = 4; df1.state = 5; } 
       }
       fb.active = false;
     } else if (fb.vx < 0 && fb.x <= df1.x + 2) {
       if (df1.state != 2 && df1.state != 4) {
-        df1.hp--; if (df1.hp <= 0) { df1.state = 4; df2.state = 5; } // Dead & Win
+        df1.hp--; if (df1.hp <= 0) { df1.state = 4; df2.state = 5; } 
       }
       fb.active = false;
     }
@@ -648,13 +662,13 @@ void animDinoFight() {
     df1.timer--; df2.timer--;
     
     auto tickState = [&](DinoFighter &df, DinoFighter &opp, int dir) {
-      if (df.state == 4 || df.state == 5) return; // dead or won (no action)
+      if (df.state == 4 || df.state == 5) return; 
       if (df.timer <= 0) {
         int r = random(100);
-        if (r < 5) { df.state = 3; df.timer = 15; fb = {df.x+(5*dir), 2, 2*dir, true, 1}; } // Beam
-        else if (r < 20) { df.state = 1; df.timer = 10; fb = {df.x+(5*dir), 2, 2*dir, true, 0}; } // Pellet
-        else if (r < 40) { df.state = 0; df.timer = 10; df.x += dir; } // Move fwd
-        else if (r < 60) { df.state = 0; df.timer = 10; df.x -= dir; } // Move bwd
+        if (r < 5) { df.state = 3; df.timer = 15; fb = {df.x+(5*dir), 2, 2*dir, true, 1}; } 
+        else if (r < 20) { df.state = 1; df.timer = 10; fb = {df.x+(5*dir), 2, 2*dir, true, 0}; } 
+        else if (r < 40) { df.state = 0; df.timer = 10; df.x += dir; } 
+        else if (r < 60) { df.state = 0; df.timer = 10; df.x -= dir; } 
         else { df.state = 0; df.timer = random(10,30); }
       }
       if (dir == 1) df.x = constrain(df.x, 2, opp.x - 4);
@@ -665,7 +679,6 @@ void animDinoFight() {
     tickState(df2, df1, -1);
   }
 
-  // Defend logic (auto duck if fireball approaches)
   if (fb.active && fb.vx > 0 && fb.x > df2.x - 14 && df2.state == 0) { df2.state = 2; df2.timer = 15; }
   if (fb.active && fb.vx < 0 && fb.x < df1.x + 14 && df1.state == 0) { df1.state = 2; df1.timer = 15; }
 
@@ -683,7 +696,6 @@ void setup() {
   mx.control(MD_MAX72XX::INTENSITY, intensity);
   mx.clear();
 
-  // Try WiFi (with 8-second timeout so it doesn't hang)
   Serial.print("WiFi connecting");
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   unsigned long wifiStart = millis();
@@ -699,7 +711,6 @@ void setup() {
     wifiConnected = true;
     configTime(UTC_OFFSET, 0, "pool.ntp.org", "time.nist.gov");
     Serial.println(" OK!");
-    // Wait for NTP sync (max 5s)
     time_t now = time(nullptr);
     unsigned long ntpStart = millis();
     while (now < 100000 && millis() - ntpStart < 5000) { delay(300); now = time(nullptr); }
