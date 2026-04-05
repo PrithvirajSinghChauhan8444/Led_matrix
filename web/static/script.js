@@ -57,6 +57,7 @@ async function sendMessage() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let assistantReply = "";
+        let rawReply = "";
         let buffer = "";
         
         while (true) {
@@ -79,8 +80,10 @@ async function sendMessage() {
                         console.log("Received data:", data);
                         if (data.type === 'tag') {
                             updateMood(data.content);
+                            rawReply += `[${data.content}]`;
                         } else if (data.type === 'text') {
                             assistantReply += data.content;
+                            rawReply += data.content;
                             bubble.innerHTML = assistantReply + '<span class="blink-cursor"></span>';
                             chatWrapper.scrollTop = chatWrapper.scrollHeight;
                         } else if (data.type === 'done') {
@@ -97,8 +100,8 @@ async function sendMessage() {
         
         // Finalize UI
         bubble.innerHTML = assistantReply;
-        if (assistantReply) {
-             messages.push({ role: "assistant", content: assistantReply });
+        if (rawReply) {
+             messages.push({ role: "assistant", content: rawReply });
         }
         
     } catch (error) {

@@ -7,9 +7,10 @@ from flask import Flask, render_template, request, Response
 
 app = Flask(__name__)
 
-ESP32_IP = "10.42.0.145" # Extracted from original bot
+ESP32_IP = "10.42.0.145" 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen2.5-coder:3b"
+# CHANGED: Using the conversational instruct model instead of coder!
+OLLAMA_MODEL = "qwen2.5:3b"
 
 MOOD_MAP = {
     "NORMAL": 0, "HAPPY": 1, "ANGRY": 2, "SAD": 3,
@@ -33,6 +34,30 @@ EmoBot: [ANGRY] Grrr! I am so mad I could short-circuit!
 
 CRITICAL: Start your response IMMEDIATELY with the emotion tag. Do not output anything before the bracket.
 """
+
+def get_weather():
+    try:
+        loc_res = requests.get("http://ip-api.com/json/", timeout=2).json()
+        lat, lon, city = loc_res['lat'], loc_res['lon'], loc_res['city']
+        
+        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        w_res = requests.get(weather_url, timeout=2).json()
+        
+        code = w_res['current_weather']['weathercode']
+        temp = w_res['current_weather']['temperature']
+        
+        mood = "WEATHER_SUN"
+        desc = "Sunny"
+        if code in [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]:
+            mood = "WEATHER_RAIN"
+            desc = "Rainy"
+        elif code in [71, 73, 75, 77, 85, 86]:
+            mood = "WEATHER_SNOW"
+            desc = "Snowy"
+            
+        return f"{desc}, {temp}°C in {city}", mood
+    except Exception:
+        return None, "NORMAL"
 
 def set_esp32_mood(mood_name):
     if ESP32_IP == "YOUR_ESP32_IP_HERE": return
@@ -67,9 +92,12 @@ def chat():
     data = request.json
     messages = data.get("messages", [])
     
-    # Ensure system prompt is the first message
     if not messages or messages[0].get("role") != "system":
-        messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+        weather_info, _ = get_weather()
+        prompt = SYSTEM_PROMPT
+        if weather_info:
+            prompt += f"\n\nCURRENT CONTEXT: The weather outside is {weather_info}. If relevant, you can react to it!"
+        messages.insert(0, {"role": "system", "content": prompt})
         
     def generate():
         payload = {"model": OLLAMA_MODEL, "messages": messages, "stream": True}
@@ -100,8 +128,7 @@ def chat():
                                     if text_after:
                                         yield f"data: {json.dumps({'type': 'text', 'content': text_after.lstrip()})}\n\n"
                                 tag_found = True
-                            elif len(tag_buffer) > 25:
-                                # The AI probably forgot the tag! Fallback to standard output.
+                            elif len(tag_buffer) > 100:
                                 yield f"data: {json.dumps({'type': 'text', 'content': tag_buffer})}\n\n"
                                 tag_found = True
                         else:
