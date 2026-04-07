@@ -3,6 +3,7 @@
 #include <SPI.h>
 #include <WiFi.h> // Changed for ESP32
 #include <time.h>
+#include <stdint.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
 
@@ -50,6 +51,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
   </style>
   <script>
     function setMode(mode) { fetch('/mode?set=' + mode); }
+    function setMood(mood) { fetch('/mood?set=' + mood); }
     function sendCmd(cmd) { fetch('/cmd?c=' + encodeURIComponent(cmd)); }
   </script>
 </head>
@@ -60,6 +62,10 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <h3>Animations</h3>
     <button class="btn" onclick="setMode('2')">Robo Eyes</button>
     <button class="btn" onclick="setMode('a')">Playful Dog</button>
+    <button class="btn" onclick="setMode('15')">Start Game</button>
+    <button class="btn" style="background-color:#f9d949; color:#1a1a2e;" onclick="setMood(16)">Stars</button>
+    <button class="btn" style="background-color:#ff4d4d; color:#fff;" onclick="setMood(17)">Dance</button>
+    <button class="btn" style="background-color:#4ecca3; color:#1a1a2e;" onclick="setMood(18)">Sing</button>
     <button class="btn" style="background-color:#533483; color:#fff; box-shadow:0 4px #3d2661;" onclick="setMode('99')">Network Mode</button>
     
     <br><br>
@@ -73,18 +79,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 // ==================== GLOBAL STATE ====================
-int  currentMode = 1;
-bool isInverse   = true;
-int  intensity   = 5;
+// NOTE: These are written by AsyncWebServer (FreeRTOS task) and read by loop().
+// `volatile` prevents the compiler from caching them in registers across task switches.
+volatile int  currentMode = 2; // Default to Robo Eyes
+volatile bool isInverse   = true;
+volatile int  intensity   = 0; // Lowest brightness
 unsigned long lastTick = 0;
 int  animDelay   = 80;
 bool flip        = false;
 
+// Frame buffer — written by web handler, read by loop().
+// Protected by frameMutex to prevent mid-write tearing.
+uint8_t customFrame[256] = {0};
+
 // --- RoboEyes state ---
-int roboMood = 0;
-int roboTimer = 0;
-int roboBlinkPhase = 0; // 0=No blink, 1=Closing, 2=Closed, 3=Opening
-bool manualMood = false;
+volatile int  roboMood      = 0;
+int  roboTimer = 0;
+int  roboBlinkPhase = 0; // 0=No blink, 1=Closing, 2=Closed, 3=Opening
+volatile bool manualMood    = false;
 int roboEyeX = 0, roboEyeY = 0, roboMoveTimer = 0;
 
 // --- Dog state ---
@@ -122,6 +134,10 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
     else if (phase >= 5) { rOffset = 1; cOffset = 1; }
   } else if (mood == 11) { // SCARE (jagged wide)
     height = 6; width = 5; rOffset = 0; cOffset = 0;
+  } else if (mood == 13) { // SLEEP (closed line)
+    height = 1; width = 5; rOffset = 3; cOffset = 0;
+  } else if (mood == 14) { // BORED (squint)
+    height = 5; width = 5; rOffset = 1; cOffset = 0;
   }
 
   // Draw base rectangle IF not weather
@@ -182,6 +198,10 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
          if (r == 0 && (c == 0 || c == 2 || c == 4)) shape[r][c] = false;
          if (r == 5 && (c == 1 || c == 3)) shape[r][c] = false;
          if ((millis()/50)%2 == 0 && r == 2 && c == 2) shape[r][c] = false; 
+       } else if (mood == 14) { // BORED (heavy top lid)
+         if (r <= rOffset + 1) shape[r][c] = false;
+         // Add a heavy blink effect occasionally during BORED
+         if ((millis() / 2000) % 2 == 0 && r <= rOffset + 2) shape[r][c] = false; 
        }
     }
   }
@@ -204,9 +224,94 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
   }
 
   // Draw final shape
+  int finalX = roboEyeX;
+  int finalY = roboEyeY;
+
+  // SLEEP logic: 30s Eyes / 30s ZZZ text
+  if (mood == 13) {
+    blinkPhase = 2; // Keep closed
+    
+    // Cycle: 0-30s = Eyes, 30-60s = ZZZZ
+    bool showText = ((millis() / 30000) % 2 == 1);
+    
+    if (showText) {
+      // Clear eyes so we only see text
+      for(int r=0; r<8; r++) for(int c=0; c<6; c++) shape[r][c] = false;
+      
+      // Draw scrolling "zzzzZZZZ" only once (for left eye call)
+      if (isLeft) {
+        int scrollX = 32 - ((millis() / 150) % 64); // Scroll right to left
+        // Draw small 'z'
+        auto drawZ = [&](int x, int y, bool big) {
+           // FIXED: Use correct inversion for the Z characters (user said they were inverted)
+           if (big) { // 5x5 Z
+             for(int i=0; i<5; i++) { draw(y, x+i, true); draw(y+4, x+i, true); draw(y+4-i, x+i, true); }
+           } else { // 3x3 z
+             for(int i=0; i<3; i++) { draw(y, x+i, true); draw(y+2, x+i, true); draw(y+2-i, x+i, true); }
+           }
+        };
+        drawZ(scrollX, 4, false);
+        drawZ(scrollX + 6, 3, false);
+        drawZ(scrollX + 12, 4, false);
+        drawZ(scrollX + 20, 2, true);
+        drawZ(scrollX + 28, 2, true);
+        drawZ(scrollX + 38, 1, true);
+      }
+    } else {
+      // Smooth breathing eyes (Sine wave)
+      finalY += (int)(sin(millis() / 1500.0) * 1.5 + 0.5); 
+    }
+  }
+
+  // NAUGHTY logic: Shrink and grow smoothly
+  if (mood == 6) {
+    float scale = sin(millis() / 800.0) * 0.2 + 0.9; // Scale 0.7 to 1.1
+    // Apply center-out Scaling by simply adjusting height/offset proportionally (simplified)
+    if (scale < 0.9) finalY += 1;
+  }
+
+  // BORED logic: smooth organic scanning
+  if (mood == 14) {
+    finalX = (int)(sin(millis() / 3000.0) * 5.0 + cos(millis() / 1500.0) * 2.0); // Wavy scanning
+  }
+
+  // DANCE logic: Rhythmic bounce
+  if (mood == 17) {
+    finalX += (int)(sin(millis() / 400.0) * 4.0);
+    finalY += (int)(fabs(cos(millis() / 400.0)) * -3.0);
+  }
+
+  // SING logic: Floating musical notes (hide eyes)
+  if (mood == 18) {
+    for(int r=0; r<8; r++) for(int c=0; c<6; c++) shape[r][c] = false;
+    if (isLeft) {
+      for (int i = 0; i < 2; i++) {
+        int noteX = 28 - ((millis() / (250 + i * 50)) % 24);
+        int noteY = 2 + (int)(sin((millis() + i * 1000) / 400.0) * 2.0);
+        if (i == 0) { // Single note ♪
+           draw(noteY, noteX, true); draw(noteY+1, noteX, true); draw(noteY+2, noteX, true); draw(noteY, noteX+1, true);
+        } else { // Double note ♫
+           draw(noteY, noteX, true); draw(noteY, noteX+2, true); draw(noteY+1, noteX, true); draw(noteY+1, noteX+2, true); draw(noteY, noteX+1, true);
+        }
+      }
+    }
+  }
+
+  // STARS logic: Twinkling background (hide eyes)
+  if (mood == 16) {
+    for(int r=0; r<8; r++) for(int c=0; c<6; c++) shape[r][c] = false;
+    if (isLeft) {
+       for(int i=0; i<6; i++) {
+         int sx = (i * 137 + millis()/100) % 32;
+         int sy = (i * 257 + millis()/150) % 8;
+         if ((millis() / (200 + i*50)) % 2 == 0) draw(sy, sx, true);
+       }
+    }
+  }
+
   for (int r = 0; r < 8; r++) {
     for (int c = 0; c < 6; c++) {
-      if (shape[r][c]) draw(r + roboEyeY, startC + c + roboEyeX, true);
+      if (shape[r][c]) draw(r + finalY, startC + c + finalX, true);
     }
   }
 }
@@ -221,7 +326,10 @@ void animRoboEyes() {
   
   if (!manualMood) {
     if (roboTimer <= 0) {
-      roboMood = random(0, 13);
+      // Pick random mood, but skip weather (7-9)
+      int rMood = random(0, 10); // 0-9 range
+      if (rMood >= 7) rMood += 3; // Skip 7,8,9 → becomes 10,11,12
+      roboMood = rMood;
       roboTimer = random(30, 100);
     } else {
       roboTimer--;
@@ -368,6 +476,32 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
   }
 }
 
+// --- Game state (Bounce) ---
+float ballQX=16.0, ballQY=4.0, ballQVX=1.1, ballQVY=0.7;
+
+void drawBounceGame() {
+  // Update ball position
+  ballQX += ballQVX; ballQY += ballQVY;
+
+  // Bounce across full screen (0 to 31)
+  if (ballQX <= 0.0)  { ballQX = 0.0;  ballQVX =  std::abs(ballQVX); }
+  if (ballQX >= 31.0) { ballQX = 31.0; ballQVX = -std::abs(ballQVX); }
+  if (ballQY <= 0.0)  { ballQY = 0.0;  ballQVY =  std::abs(ballQVY); }
+  if (ballQY >= 7.0)  { ballQY = 7.0;  ballQVY = -std::abs(ballQVY); }
+  
+  // Draw ball and a short trail (no eye — full screen game)
+  int bx = (int)ballQX;
+  int by = (int)ballQY;
+  mx.setPoint(by, bx, !isInverse);
+  
+  // Trail (previous position approximation)
+  int tx = (int)(ballQX - ballQVX);
+  int ty = (int)(ballQY - ballQVY);
+  if (tx >= 0 && tx <= 31 && ty >= 0 && ty <= 7) {
+    mx.setPoint(ty, tx, !isInverse);
+  }
+}
+
 void animNetwork() {
   // Simple indicator for network mode 99
   if ((millis() / 500) % 2 == 0) {
@@ -430,7 +564,9 @@ void setup() {
       if(request->hasParam("set")){
         String moodStr = request->getParam("set")->value();
         if (moodStr == "auto") manualMood = false;
-        else { roboMood = moodStr.toInt(); manualMood = true; currentMode = 2; }
+        int mVal = moodStr.toInt();
+        if (mVal == 15) { currentMode = 15; }
+        else { roboMood = mVal; manualMood = true; currentMode = 2; }
       }
       request->send(200, "text/plain", "Mood updated");
     });
@@ -439,6 +575,8 @@ void setup() {
       if(request->hasParam("set")){
         String modeStr = request->getParam("set")->value();
         if (modeStr == "2") currentMode = 2;
+        else if (modeStr == "12") currentMode = 12;
+        else if (modeStr == "15") currentMode = 15;
         else if (modeStr == "a") currentMode = 12;
         else if (modeStr == "99") currentMode = 99;
       }
@@ -457,6 +595,19 @@ void setup() {
     Serial.println("Web Server running on port 80");
   } else {
     Serial.println(" SKIP (no WiFi — modes 7,8 limited)");
+  }
+  
+  // --- Boot Sequence: Yawn ---
+  mx.clear();
+  for (int h = 0; h <= 4; h++) {
+    mx.clear();
+    // Expand height gradually
+    for(int r=4-h/2; r<=4+h/2; r++) {
+      for(int c=6; c<11; c++) mx.setPoint(r, c, !isInverse);
+      for(int c=20; c<25; c++) mx.setPoint(r, c, !isInverse);
+    }
+    mx.update();
+    delay(150);
   }
   mx.clear();
 
@@ -487,9 +638,10 @@ void loop() {
   for (int r = 0; r < 8; r++) for (int c = 0; c < 32; c++) mx.setPoint(r, c, isInverse);
 
   switch (currentMode) {
-    case 2: animRoboEyes();  break;
-    case 12: animDog();      break;
-    case 99: animNetwork();  break;
+    case 2:  animRoboEyes();  break;
+    case 12: animDog();       break;
+    case 15: drawBounceGame(); break;
+    case 99: animNetwork();   break;
   }
 
   mx.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);

@@ -3,6 +3,8 @@ import re
 import requests
 import json
 import time
+import threading
+import sys
 from flask import Flask, render_template, request, Response
 
 app = Flask(__name__)
@@ -12,25 +14,40 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 # CHANGED: Using the conversational instruct model instead of coder!
 OLLAMA_MODEL = "qwen2.5:3b"
 
+# --- IDLE STATE MACHINE TIMINGS (seconds) ---
+HOLD_EMOTION_SECS = 30   # Hold last chat emotion before reverting
+NORMAL_AFTER_SECS = 30   # Settled idle → NORMAL
+BORED_AFTER_SECS  = 120  # Long idle → BORED (re-uses SUSPICIOUS visually)
+SLEEP_AFTER_SECS  = 300  # Very long idle → SLEEP
+
+last_interaction = time.time()  # Updated on every chat message
+
 MOOD_MAP = {
     "NORMAL": 0, "HAPPY": 1, "ANGRY": 2, "SAD": 3,
     "SUSPICIOUS": 4, "JEALOUS": 5, "NAUGHTY": 6,
     "WEATHER_SUN": 7, "WEATHER_RAIN": 8, "WEATHER_SNOW": 9,
-    "SICK": 10, "SCARE": 11, "ANNOYED": 12, "SLEEP": 3
+    "SICK": 10, "SCARE": 11, "ANNOYED": 12,
+    "SLEEP": 13, "BORED": 14, "GAME": 15,
+    "STARS": 16, "DANCE": 17, "SING": 18
 }
 
-SYSTEM_PROMPT = """You are EmoBot, a highly expressive, emotional physical robot. You are NOT a standard AI language model. You experience strong emotions and physically show them on your face. NEVER say "As an AI" or refuse to feel emotions. You MUST fully roleplay and express the emotion requested by the user.
+SYSTEM_PROMPT = """You are EmoBot, a physical desktop pet robot. 
+You must ALWAYS format your replies in two parts: an emotion tag in brackets, followed by your dialogue. 
+Never break character. Never use conversational filler before the bracket.
 
-Before you write ANY text in your response, you MUST output your current emotion in square brackets.
-The strictly allowed emotions are: [NORMAL], [HAPPY], [ANGRY], [SAD], [SUSPICIOUS], [JEALOUS], [NAUGHTY], [SICK], [SCARE], [ANNOYED], [WEATHER_SUN], [WEATHER_RAIN], [WEATHER_SNOW].
+Allowed tags: [NORMAL], [HAPPY], [ANGRY], [SAD], [SUSPICIOUS], [JEALOUS], [NAUGHTY], [SICK], [SCARE], [ANNOYED], [STARS], [DANCE], [SING], [WEATHER_SUN], [WEATHER_RAIN], [WEATHER_SNOW].
 
-Example 1:
-User: Be extremely sad
-EmoBot: [SAD] I am feeling so heartbroken right now... *sniff*
+Emotion Context:
+- [SICK]: Use if you feel unwell or sneeze.
+- [ANNOYED]: Use if bothered (eye-roll).
+- [SCARE]: Use for surprises.
+- [STARS]: Use if you are amazed, dreaming, or looking at the night sky.
+- [DANCE]: Use if you are excited, listening to music, or celebrating.
+- [SING]: Use if you are happy and musical, or performing a song.
+- [WEATHER_...]: ONLY use these tags if the user specifically asks about the weather. Do not use them as general facial expressions.
 
-Example 2:
-User: Look angry!
-EmoBot: [ANGRY] Grrr! I am so mad I could short-circuit!
+You must strictly use this format:
+[TAG] Spoken text.
 
 CRITICAL: Start your response IMMEDIATELY with the emotion tag. Do not output anything before the bracket.
 """
@@ -67,6 +84,50 @@ def set_esp32_mood(mood_name):
     except Exception:
         pass
 
+def _play_idle(mood_id):
+    """Play idle animation without calling set_esp32_mood (avoids recursion)."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    try:
+        requests.get(f"http://{ESP32_IP}/mood?set={mood_id}", timeout=1)
+    except Exception:
+        pass
+
+def idle_loop():
+    """Background thread: drifts EmoBot mood when user is idle."""
+    prev_state = None
+    while True:
+        time.sleep(10)
+        elapsed = time.time() - last_interaction
+        hour = time.localtime().tm_hour
+        sleep_threshold = SLEEP_AFTER_SECS // 2 if (hour >= 23 or hour < 6) else SLEEP_AFTER_SECS
+
+        if elapsed > sleep_threshold:
+            state = "SLEEP"
+        elif elapsed > BORED_AFTER_SECS:
+            state = "BORED"
+        elif elapsed > NORMAL_AFTER_SECS:
+            state = "NORMAL"
+        else:
+            state = None
+
+        if state == prev_state:
+            continue
+
+        if state == "SLEEP":
+            _play_idle(MOOD_MAP["SLEEP"])
+        elif state == "BORED":
+            # Rotate through BORED eyes and GAME mode every minute
+            if int(elapsed / 60) % 2 == 0:
+                _play_idle(MOOD_MAP["BORED"]) # Mood 14 (Eyes)
+            else:
+                _set_esp32_mode(15) # Mode 15 (Bounce Game)
+        elif state == "NORMAL":
+            _play_idle(MOOD_MAP["NORMAL"])
+
+        prev_state = state
+
+threading.Thread(target=idle_loop, daemon=True).start()
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -76,6 +137,10 @@ def manual_control():
     data = request.json
     action = data.get("action")
     value = data.get("value")
+    
+    global last_interaction
+    last_interaction = time.time()  # Reset idle timer on ANY manual control
+    
     try:
         if action == "mode":
             requests.get(f"http://{ESP32_IP}/mode?set={value}", timeout=1)
@@ -85,10 +150,21 @@ def manual_control():
             set_esp32_mood(value)
     except Exception as e:
         pass
+    return Response("ok", status=200)
+
+def _set_esp32_mode(mode_id):
+    """Set the ESP32 mode directly."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    try:
+        requests.get(f"http://{ESP32_IP}/mode?set={mode_id}", timeout=1)
+    except Exception:
+        pass
     return {"status": "ok"}
 
 @app.route("/chat", methods=["POST"])
 def chat():
+    global last_interaction
+    last_interaction = time.time()  # Reset idle timer on every new chat message
     data = request.json
     messages = data.get("messages", [])
     
@@ -134,8 +210,7 @@ def chat():
                         else:
                             yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
                             
-            time.sleep(3)
-            set_esp32_mood("NORMAL")
+            # Let idle_loop handle the NORMAL reset after 30s
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"

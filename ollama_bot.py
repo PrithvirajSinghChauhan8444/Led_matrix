@@ -3,6 +3,7 @@ import json
 import re
 import sys
 import time
+import threading
 
 # --- CONFIGURATION ---
 ESP32_IP = "10.42.0.145"  
@@ -12,21 +13,21 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 # Make sure you run `ollama run qwen2.5:3b` in your terminal to download it!
 OLLAMA_MODEL = "qwen2.5:3b" 
 
+# --- IDLE STATE MACHINE TIMINGS (seconds) ---
+HOLD_EMOTION_SECS = 30   # Hold last chat emotion before reverting
+NORMAL_AFTER_SECS = 30   # Settled idle → NORMAL
+BORED_AFTER_SECS  = 120  # Long idle → BORED (re-uses SUSPICIOUS visually)
+SLEEP_AFTER_SECS  = 300  # Very long idle → SLEEP
+
+last_interaction = time.time()
+
 MOOD_MAP = {
-    "NORMAL": 0,
-    "HAPPY": 1,
-    "ANGRY": 2,
-    "SAD": 3,
-    "SUSPICIOUS": 4,
-    "JEALOUS": 5,
-    "NAUGHTY": 6,
-    "WEATHER_SUN": 7,
-    "WEATHER_RAIN": 8,
-    "WEATHER_SNOW": 9,
-    "SICK": 10,
-    "SCARE": 11,
-    "ANNOYED": 12,
-    "SLEEP": 3 
+    "NORMAL": 0, "HAPPY": 1, "ANGRY": 2, "SAD": 3,
+    "SUSPICIOUS": 4, "JEALOUS": 5, "NAUGHTY": 6,
+    "WEATHER_SUN": 7, "WEATHER_RAIN": 8, "WEATHER_SNOW": 9,
+    "SICK": 10, "SCARE": 11, "ANNOYED": 12,
+    "SLEEP": 13, "BORED": 14, "GAME": 15,
+    "STARS": 16, "DANCE": 17, "SING": 18
 }
 
 # CHANGED: Simplified, template-driven prompt that 3B models follow much better.
@@ -34,7 +35,16 @@ SYSTEM_PROMPT = """You are EmoBot, a physical desktop pet robot.
 You must ALWAYS format your replies in two parts: an emotion tag in brackets, followed by your dialogue. 
 Never break character. Never use conversational filler before the bracket.
 
-Allowed tags: [NORMAL], [HAPPY], [ANGRY], [SAD], [SUSPICIOUS], [JEALOUS], [NAUGHTY], [SICK], [SCARE], [ANNOYED], [WEATHER_SUN], [WEATHER_RAIN], [WEATHER_SNOW].
+Allowed tags: [NORMAL], [HAPPY], [ANGRY], [SAD], [SUSPICIOUS], [JEALOUS], [NAUGHTY], [SICK], [SCARE], [ANNOYED], [STARS], [DANCE], [SING], [WEATHER_SUN], [WEATHER_RAIN], [WEATHER_SNOW].
+
+Emotion Context:
+- [SICK]: Use if you feel unwell or sneeze.
+- [ANNOYED]: Use if bothered (eye-roll).
+- [SCARE]: Use for surprises.
+- [STARS]: Use if you are amazed, dreaming, or looking at the night sky.
+- [DANCE]: Use if you are excited, listening to music, or celebrating.
+- [SING]: Use if you are happy and musical, or performing a song.
+- [WEATHER_...]: ONLY use these tags if the user specifically asks about the weather. Do not use them as general facial expressions.
 
 You must strictly use this format:
 [TAG] Spoken text.
@@ -82,6 +92,48 @@ def set_esp32_mood(mood_name):
     except Exception as e:
         pass 
 
+def _set_esp32_mode(mode_id):
+    """Set the ESP32 mode directly."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    try:
+        requests.get(f"http://{ESP32_IP}/mode?set={mode_id}", timeout=1)
+    except Exception:
+        pass
+
+def idle_loop():
+    """Background thread: drifts EmoBot mood when user is idle."""
+    prev_state = None
+    while True:
+        time.sleep(10)
+        elapsed = time.time() - last_interaction
+        hour = time.localtime().tm_hour
+        sleep_threshold = SLEEP_AFTER_SECS // 2 if (hour >= 23 or hour < 6) else SLEEP_AFTER_SECS
+
+        if elapsed > sleep_threshold:
+            state = "SLEEP"
+        elif elapsed > BORED_AFTER_SECS:
+            state = "BORED"
+        elif elapsed > NORMAL_AFTER_SECS:
+            state = "NORMAL"
+        else:
+            state = None
+
+        if state == prev_state:
+            continue
+
+        if state == "SLEEP":
+            set_esp32_mood("SLEEP")
+        elif state == "BORED":
+            # Rotate through BORED eyes and GAME mode every minute
+            if int(elapsed / 60) % 2 == 0:
+                set_esp32_mood("BORED")
+            else:
+                _set_esp32_mode(15)
+        elif state == "NORMAL":
+            set_esp32_mood("NORMAL")
+
+        prev_state = state
+
 def chat_loop():
     print("🤖 Emotional Ollama Bot Initialized!")
     print(f"Current IP: {ESP32_IP}")
@@ -102,6 +154,9 @@ def chat_loop():
 
     messages = [{"role": "system", "content": current_prompt}]
 
+    # Start idle state machine background thread
+    threading.Thread(target=idle_loop, daemon=True).start()
+
     while True:
         try:
             user_input = input("\nYou: ")
@@ -111,6 +166,8 @@ def chat_loop():
                 break
             
             messages.append({"role": "user", "content": user_input})
+            global last_interaction
+            last_interaction = time.time()  # Reset idle timer
             print("Bot: ", end="", flush=True)
             
             payload = {
@@ -164,8 +221,8 @@ def chat_loop():
             print() 
             messages.append({"role": "assistant", "content": full_reply})
             
-            time.sleep(3) 
-            set_esp32_mood("NORMAL")
+            # Removed hardcoded NORMAL reset; let idle_loop handle it after 30s
+            pass
             
         except KeyboardInterrupt:
             print("\nExiting...")
