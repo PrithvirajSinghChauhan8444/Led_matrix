@@ -19,14 +19,29 @@ function appendMessage(role, text) {
 
 function updateMood(tag) {
     moodBadge.textContent = tag;
+    moodBadge.classList.remove('glitch');
     if (tag === 'SCARE' || tag === 'ANGRY') {
         moodBadge.classList.add('glitch');
         moodBadge.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+    } else if (tag === 'HAPPY' || tag === 'DANCE') {
+        moodBadge.style.background = 'linear-gradient(135deg, #22c55e, #16a34a)';
+    } else if (tag === 'SAD') {
+        moodBadge.style.background = 'linear-gradient(135deg, #3b82f6, #1d4ed8)';
+    } else if (tag === 'NAUGHTY' || tag === 'SUSPICIOUS') {
+        moodBadge.style.background = 'linear-gradient(135deg, #f97316, #ea580c)';
+    } else if (tag === 'JEALOUS') {
+        moodBadge.style.background = 'linear-gradient(135deg, #84cc16, #65a30d)';
+    } else if (tag === 'SING') {
+        moodBadge.style.background = 'linear-gradient(135deg, #06b6d4, #0891b2)';
+    } else if (tag === 'STARS') {
+        moodBadge.style.background = 'linear-gradient(135deg, #eab308, #ca8a04)';
+    } else if (tag === 'SLEEP') {
+        moodBadge.style.background = 'linear-gradient(135deg, #6366f1, #4f46e5)';
+    } else if (tag === 'BORED') {
+        moodBadge.style.background = 'linear-gradient(135deg, #78716c, #57534e)';
     } else if (tag.startsWith('WEATHER')) {
-        moodBadge.classList.remove('glitch');
         moodBadge.style.background = 'linear-gradient(135deg, #eab308, #f97316)';
     } else {
-        moodBadge.classList.remove('glitch');
         moodBadge.style.background = 'linear-gradient(135deg, #ec4899, #8b5cf6)';
     }
 }
@@ -87,7 +102,7 @@ async function sendMessage() {
                             bubble.innerHTML = assistantReply + '<span class="blink-cursor"></span>';
                             chatWrapper.scrollTop = chatWrapper.scrollHeight;
                         } else if (data.type === 'done') {
-                            setTimeout(() => updateMood("NORMAL"), 3000);
+                            // Don't reset mood — let idle loop handle it
                         } else if (data.type === 'error') {
                             bubble.innerHTML = "<em>Error: " + data.content + "</em>";
                         }
@@ -127,3 +142,52 @@ function control(action, value) {
         body: JSON.stringify({ action, value })
     });
 }
+
+// --- Live mood polling ---
+const BAR_COLORS = {
+    HAPPY:'#22c55e', SAD:'#3b82f6', ANGRY:'#ef4444', NAUGHTY:'#f97316',
+    SUSPICIOUS:'#fb923c', JEALOUS:'#84cc16', ANNOYED:'#f43f5e', SICK:'#a3e635',
+    SCARE:'#dc2626', BORED:'#78716c', SLEEP:'#6366f1', STARS:'#eab308',
+    DANCE:'#10b981', SING:'#06b6d4', NORMAL:'#8b5cf6'
+};
+
+setInterval(async () => {
+    try {
+        const res = await fetch('/current_mood');
+        const data = await res.json();
+        if (data.mood) {
+            updateMood(data.mood);
+            const sm = document.getElementById('stat-mood');
+            const si = document.getElementById('stat-id');
+            const st = document.getElementById('stat-idle');
+            const ss = document.getElementById('stat-state');
+            if (sm) sm.textContent = data.mood;
+            if (si) si.textContent = data.mood_id;
+            if (st) {
+                const s = data.idle_secs;
+                st.textContent = s >= 60 ? Math.floor(s/60) + 'm ' + (s%60) + 's' : s + 's';
+            }
+            if (ss) ss.textContent = data.idle_state;
+
+            // Render emotion bars
+            if (data.stats) {
+                const container = document.getElementById('bars-container');
+                if (container) {
+                    const maxVal = Math.max(1, ...Object.values(data.stats));
+                    let html = '';
+                    const sorted = Object.entries(data.stats).sort((a,b) => b[1] - a[1]);
+                    for (const [name, count] of sorted) {
+                        if (count === 0) continue;
+                        const pct = Math.round((count / maxVal) * 100);
+                        const color = BAR_COLORS[name] || '#8b5cf6';
+                        html += `<span style="color:#ccc;text-align:right">${name}</span>`;
+                        html += `<div style="background:rgba(255,255,255,0.08);border-radius:4px;height:14px;overflow:hidden">`;
+                        html += `<div style="width:${pct}%;height:100%;background:${color};border-radius:4px;transition:width 0.5s"></div></div>`;
+                        html += `<span style="color:#888">${count}</span>`;
+                    }
+                    container.innerHTML = html;
+                }
+            }
+        }
+    } catch (e) { /* ignore */ }
+}, 3000);

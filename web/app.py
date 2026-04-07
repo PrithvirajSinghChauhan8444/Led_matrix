@@ -21,6 +21,16 @@ BORED_AFTER_SECS  = 120  # Long idle → BORED (re-uses SUSPICIOUS visually)
 SLEEP_AFTER_SECS  = 300  # Very long idle → SLEEP
 
 last_interaction = time.time()  # Updated on every chat message
+current_mood = "NORMAL"  # Live mood tracker for the frontend
+
+# --- Emotion metrics: count how many times each mood has been triggered ---
+emotion_stats = {
+    "HAPPY": 0, "SAD": 0, "ANGRY": 0, "NAUGHTY": 0,
+    "SUSPICIOUS": 0, "JEALOUS": 0, "ANNOYED": 0,
+    "SICK": 0, "SCARE": 0, "BORED": 0,
+    "SLEEP": 0, "STARS": 0, "DANCE": 0, "SING": 0,
+    "NORMAL": 0
+}
 
 MOOD_MAP = {
     "NORMAL": 0, "HAPPY": 1, "ANGRY": 2, "SAD": 3,
@@ -100,8 +110,12 @@ def get_weather():
         return None, "NORMAL"
 
 def set_esp32_mood(mood_name):
+    global current_mood
     if ESP32_IP == "YOUR_ESP32_IP_HERE": return
     mood_id = MOOD_MAP.get(mood_name.upper(), 0)
+    current_mood = mood_name.upper()
+    if current_mood in emotion_stats:
+        emotion_stats[current_mood] += 1
     try:
         requests.get(f"http://{ESP32_IP}/mood?set={mood_id}", timeout=1)
     except Exception:
@@ -109,7 +123,15 @@ def set_esp32_mood(mood_name):
 
 def _play_idle(mood_id):
     """Play idle animation without calling set_esp32_mood (avoids recursion)."""
+    global current_mood
     if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    # Reverse-lookup name from ID
+    for name, mid in MOOD_MAP.items():
+        if mid == mood_id:
+            current_mood = name
+            if name in emotion_stats:
+                emotion_stats[name] += 1
+            break
     try:
         requests.get(f"http://{ESP32_IP}/mood?set={mood_id}", timeout=1)
     except Exception:
@@ -154,6 +176,26 @@ threading.Thread(target=idle_loop, daemon=True).start()
 @app.route("/")
 def index():
     return render_template("index.html")
+
+@app.route("/current_mood")
+def get_current_mood():
+    elapsed = int(time.time() - last_interaction)
+    mood_id = MOOD_MAP.get(current_mood, 0)
+    if elapsed > SLEEP_AFTER_SECS:
+        idle_state = "SLEEPING"
+    elif elapsed > BORED_AFTER_SECS:
+        idle_state = "BORED"
+    elif elapsed > NORMAL_AFTER_SECS:
+        idle_state = "IDLE"
+    else:
+        idle_state = "ACTIVE"
+    return {
+        "mood": current_mood,
+        "mood_id": mood_id,
+        "idle_secs": elapsed,
+        "idle_state": idle_state,
+        "stats": emotion_stats
+    }
 
 @app.route("/control", methods=["POST"])
 def manual_control():

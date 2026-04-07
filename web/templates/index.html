@@ -19,6 +19,16 @@
                 <h1>EmoBot 🤖</h1>
                 <div id="mood-badge" class="mood-badge">NORMAL</div>
             </header>
+            <div id="live-stats" style="display:flex; gap:16px; justify-content:center; padding:8px 0; font-size:13px; color:#aaa; flex-wrap:wrap;">
+                <span>🎭 Mood: <strong id="stat-mood" style="color:#4ecca3">NORMAL</strong></span>
+                <span>🔢 ID: <strong id="stat-id" style="color:#4ecca3">0</strong></span>
+                <span>⏱️ Idle: <strong id="stat-idle" style="color:#4ecca3">0s</strong></span>
+                <span>📡 State: <strong id="stat-state" style="color:#4ecca3">ACTIVE</strong></span>
+            </div>
+            <div id="emotion-bars" style="padding:4px 12px 8px; font-size:12px; max-height:150px; overflow-y:auto;">
+                <div style="display:grid; grid-template-columns:80px 1fr 30px; gap:3px; align-items:center;" id="bars-container">
+                </div>
+            </div>
             <div class="chat-wrapper" id="chat-wrapper">
                 <div class="message assistant">
                     <div class="bubble">Hello! I am your emotional companion. How are you feeling today?</div>
