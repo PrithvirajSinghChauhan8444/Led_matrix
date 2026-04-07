@@ -1,159 +1,126 @@
-# EmoBot — Feature Roadmap & Design Notes
+# EmoBot Evolution Roadmap
 
-## 1. Ambient Mood State Machine
-
-### Problem
-When the user is not chatting, EmoBot behaves randomly. It should drift through natural states like a real desktop pet (idle → bored → sleepy).
-
-### Design
-
-EmoBot has an **internal state** that changes based on:
-- **Time since last interaction** (idle drift)
-- **Time of day** (night = sleepy faster)
-- **Last chat emotion** (carry-over mood)
-
-#### State Transitions
-
-| Time Since Last Chat | State |
-|---|---|
-| 0 – 30s | Current chat emotion (held) |
-| 30s – 2min | `NORMAL` (idle, calm) |
-| 2min – 5min | `BORED` (slow blinks) |
-| 5min+ | `SLEEP` |
-
-> **Note:** These durations are intentionally short for a desktop pet feel. Tune them via constants in code.
-
-#### Time-of-Day Modifiers
-
-| Time | Effect |
-|---|---|
-| 11pm – 6am | Reach `SLEEP` 2× faster |
-| 6am – 9am | Default to `HAPPY` on wake |
-| Rest of day | Normal drift |
-
-### Implementation Plan
-
-1. **Background thread** in `app.py` / `ollama_bot.py` that runs every ~10s.
-2. Thread checks `time.time() - last_interaction_time`.
-3. Based on elapsed time, calls `set_esp32_mood()` with the appropriate state.
-4. Each new chat message updates `last_interaction_time` and resets the drift.
-
-```python
-# Pseudocode
-import threading, time
-
-last_interaction = time.time()
-current_idle_mood = "NORMAL"
-
-def idle_loop():
-    while True:
-        elapsed = time.time() - last_interaction
-        if elapsed > 300:       # 5 min
-            set_esp32_mood("SLEEP")
-        elif elapsed > 120:     # 2 min
-            set_esp32_mood("BORED") # TODO: add BORED to mood map
-        elif elapsed > 30:      # 30 sec
-            set_esp32_mood("NORMAL")
-        time.sleep(10)
-
-thread = threading.Thread(target=idle_loop, daemon=True)
-thread.start()
-```
+> From a chatbot with a face → a **living desktop companion** that sees, feels, and acts.
 
 ---
 
-## 2. Live Animation Streaming (AI → ESP32)
+## Phase 1: System Awareness ("The Senses")
 
-### Problem
-Currently, the AI only tells the ESP32 *which mood* to display (a single integer). The ESP32 chooses the animation. We want the Python/AI layer to be in **full control** of what is rendered, frame by frame.
+Feed EmoBot real-time system stats via `psutil` so it **reacts to your machine's state**.
+
+### Data Sources & Reactions
+
+| Stat | Source | EmoBot Reaction |
+|:---|:---|:---|
+| **CPU Usage** | `psutil.cpu_percent()` | >80% → ANNOYED. "Who's hogging my brain?!" |
+| **RAM Usage** | `psutil.virtual_memory()` | >85% → SICK. "I feel bloated... close tabs!" |
+| **Battery** | `psutil.sensors_battery()` | <15% → SCARE. "I'M DYING! PLUG ME IN!" |
+| **Disk Space** | `psutil.disk_usage('/')` | <10% free → SUSPICIOUS. "Where did the space go..." |
+| **CPU Temp** | `psutil.sensors_temperatures()` | >75°C → ANGRY. "It's getting HOT in here!" |
+| **GPU Temp** | `nvidia-smi` or `sensors` | >80°C → SCARE + flicker animation |
+| **Network** | `psutil.net_io_counters()` | Disconnected → SAD. Fast → DANCE |
+| **Time of Day** | `datetime` | Late night → SLEEP. Morning → HAPPY |
+| **Uptime** | `psutil.boot_time()` | >12h → BORED. "Restart me maybe?" |
+
+### Implementation
+- Background thread polling every 10s
+- Feed stats into the LLM context so EmoBot can reference them in conversation
+- Autonomous mood triggers (e.g., battery critical → override mood to SCARE)
+- Stats injected into system prompt as `SYSTEM STATUS: CPU 45%, RAM 72%, Battery 80%`
+
+---
+
+## Phase 2: Idle Dashboard ("The Body")
+
+When EmoBot is idle, the **LED matrix shows system stats** instead of just sleeping eyes.
+
+### Idle State Rotation
+```
+0-30s idle  → Normal eyes
+30-120s     → System stats ticker on LED matrix
+120-300s    → Bounce game / Bored scanning
+300s+       → Sleep animation
+```
+
+### LED Matrix Stats Display
+- Scroll system values across 32×8 matrix: `CPU:45% RAM:72% BAT:80%`
+- Use existing `/text` endpoint to push formatted strings from Python
+- Tiny bar graphs (4px high) for CPU/RAM using pixel art
+
+### Flask Frontend Dashboard
+- Add a "System" panel to `index.html` showing:
+  - CPU/RAM/Disk as progress bars
+  - Battery with charge indicator
+  - Network up/down speed
+  - CPU/GPU temps with color coding (green/yellow/red)
+  - System uptime
+- Auto-refresh every 5s alongside emotion metrics
+- New API endpoint: `GET /system_stats`
+
+---
+
+## Phase 3: Agentic System ("The Hands")
+
+Give EmoBot the ability to **do things** on your PC via structured tool-calling.
+
+### Safe Actions (no confirmation needed)
+- Open applications: `firefox`, `code`, `nautilus`
+- System notifications: `notify-send` on Linux
+- Read clipboard, get time/date
+- List files in a directory
+- Take a screenshot
+- Set a timer/reminder
+
+### Guarded Actions (confirmation required)
+- Kill a process by name/PID
+- Write/move/delete files
+- Change system volume/brightness
+- Run arbitrary shell commands
 
 ### Architecture
-
 ```
-Ollama Model  →  Python  →  HTTP POST /frame  →  ESP32  →  LED Matrix
-```
-
-Python becomes the animation engine. The ESP32 is just a "dumb" renderer that draws whatever frame it receives.
-
-### Frame Format
-
-A frame is a flat array of pixel values, one per LED. For a 32×8 matrix = 256 values.
-
-```json
-POST /frame
-Content-Type: application/json
-
-{
-  "frame": [0, 1, 0, 1, 0, 0, 1, 1, ...]
-}
+User input → app.py → Ollama (with tool definitions)
+                         ↓
+                    Structured output:
+                    [HAPPY][ACTION:open_app:firefox] Opening Firefox for you!
+                         ↓
+                    tool_executor.py → Execute + return result
+                         ↓
+                    Feed result back to Ollama for next response
 ```
 
-Each value: `0` = off, `1` = on (for monochrome), or a brightness value `0–255`.
-
-### ESP32 Side (`main.cpp`)
-
-Add a new HTTP endpoint `/frame`:
-
-```cpp
-server.on("/frame", HTTP_POST, []() {
-    String body = server.arg("plain");
-    DynamicJsonDocument doc(4096);
-    deserializeJson(doc, body);
-    JsonArray pixels = doc["frame"].as<JsonArray>();
-
-    int i = 0;
-    for (int y = 0; y < MATRIX_HEIGHT; y++) {
-        for (int x = 0; x < MATRIX_WIDTH; x++) {
-            int val = pixels[i++];
-            matrix.drawPixel(x, y, val ? LED_ON : LED_OFF);
-        }
-    }
-    matrix.show();
-    server.send(200, "text/plain", "ok");
-});
-```
-
-### Python Side
-
-Define animations as lists of frames. Play them in a background thread.
-
-```python
-HAPPY_ANIM = [
-    [0,1,0,1,0,0,0,0, ...],  # frame 1 (smile)
-    [0,1,1,1,0,0,0,0, ...],  # frame 2 (big smile)
-]
-
-def play_animation(frames, loops=3, fps=8):
-    for _ in range(loops):
-        for frame in frames:
-            requests.post(f"http://{ESP32_IP}/frame", json={"frame": frame}, timeout=0.5)
-            time.sleep(1 / fps)
-
-# Call after AI responds with a mood:
-threading.Thread(target=play_animation, args=(HAPPY_ANIM,), daemon=True).start()
-```
-
-### AI Advantage
-Since Python controls the renderer, the model can eventually:
-- Generate its own frame patterns for new emotions
-- Blend animations based on conversation intensity
-- Update the face in real time mid-response (not just after)
-
-### TODO (Implementation Order)
-- [ ] Add `/frame` POST endpoint to ESP32 firmware
-- [ ] Define matrix dimensions as constants (width × height)
-- [ ] Define Python frame arrays for each emotion in `animations.py`
-- [ ] Integrate `play_animation()` into `set_esp32_mood()`
-- [ ] Run animation playback in a daemon thread to avoid blocking chat
+### Safety Layer
+- `safe: False` tools show a confirmation modal in the Flask UI
+- Audit log with timestamp + tool + params + result
+- Configurable whitelist/blacklist for apps and commands
 
 ---
 
-## Summary
+## Phase 4: Personality Memory ("The Soul")
 
-| Feature | Status | Priority |
-|---|---|---|
-| Mood state machine (idle drift) | Planned | High |
-| Time-of-day modifier | Planned | Medium |
-| Live frame streaming endpoint | Planned | High |
-| Python animation library | Planned | High |
-| AI-generated frame patterns | Future | Low |
+- **Persistent emotion history** — Save `emotion_stats` to JSON on disk
+- **User preferences** — Remember apps, active hours
+- **Conversation memory** — Summarize past chats into prompt
+- **Learned behaviors** — "You always check email at 9am, want me to open it?"
+
+---
+
+## Proposed File Structure
+
+```
+Led_matrix/
+├── src/main.cpp              # ESP32 firmware
+├── ollama_bot.py             # CLI chatbot
+├── web/
+│   ├── app.py                # Flask backend (brain)
+│   ├── system_monitor.py     # NEW: psutil stats collector
+│   ├── tool_executor.py      # NEW: agentic action handlers
+│   ├── static/ & templates/
+├── data/
+│   ├── emotion_history.json  # Persistent emotion stats
+│   └── action_log.json       # Audit log
+└── docs/
+    └── emobot_roadmap.md     # This file
+```
+
+## Priority: Phase 1 → Phase 2 → Phase 3 → Phase 4
