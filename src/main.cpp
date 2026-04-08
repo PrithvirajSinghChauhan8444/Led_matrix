@@ -2,6 +2,8 @@
 #include <MD_MAX72xx.h>
 #include <SPI.h>
 #include <WiFi.h> // Changed for ESP32
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <time.h>
 #include <stdint.h>
 #include <ESPAsyncWebServer.h>
@@ -28,6 +30,7 @@ bool wifiConnected = false;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 String networkText = "";
+int scrollPos = 0;
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -91,6 +94,18 @@ bool flip        = false;
 // Frame buffer — written by web handler, read by loop().
 // Protected by frameMutex to prevent mid-write tearing.
 uint8_t customFrame[256] = {0};
+
+// --- System Stats ---
+String currentTime = "";
+String batteryStatus = "";
+String cpuStatus = "";
+String gpuStatus = "";
+String ramStatus = "";
+String uptimeStatus = "";
+String internetStatus = "";
+unsigned long lastStatsFetch = 0;
+int statsIndex = 0;
+String statsList[7];
 
 // --- RoboEyes state ---
 volatile int  roboMood      = 0;
@@ -503,10 +518,63 @@ void drawBounceGame() {
 }
 
 void animNetwork() {
-  // Simple indicator for network mode 99
-  if ((millis() / 500) % 2 == 0) {
-    mx.setPoint(0, 0, !isInverse);
-    mx.setPoint(0, 31, !isInverse);
+  // Scroll text across the matrix
+  if (networkText.length() == 0) {
+    // Fallback to simple indicator
+    if ((millis() / 500) % 2 == 0) {
+      mx.setPoint(0, 0, !isInverse);
+      mx.setPoint(0, 31, !isInverse);
+    }
+    return;
+  }
+
+  // Scroll speed
+  if ((millis() / 200) % 1 == 0) { // Every 200ms
+    scrollPos++;
+    if (scrollPos > networkText.length() * 6 + 32) scrollPos = 0; // Reset after scrolling off
+  }
+
+  // Draw scrolling text
+  for (int i = 0; i < networkText.length(); i++) {
+    char c = networkText[i];
+    int charStart = i * 6 - scrollPos;
+    if (charStart > 31 || charStart < -5) continue;
+
+    // Simple 5x7 font for each char
+    for (int r = 0; r < 7; r++) {
+      for (int b = 0; b < 5; b++) {
+        if (charStart + b >= 0 && charStart + b < 32) {
+          bool pixel = false;
+          // Basic font mapping (simplified)
+          if (c >= '0' && c <= '9') {
+            int digit = c - '0';
+            uint8_t font[10][5] = {
+              {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
+              {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
+              {0x42, 0x61, 0x51, 0x49, 0x46}, // 2
+              {0x21, 0x41, 0x45, 0x4B, 0x31}, // 3
+              {0x18, 0x14, 0x12, 0x7F, 0x10}, // 4
+              {0x27, 0x45, 0x45, 0x45, 0x39}, // 5
+              {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 6
+              {0x01, 0x71, 0x09, 0x05, 0x03}, // 7
+              {0x36, 0x49, 0x49, 0x49, 0x36}, // 8
+              {0x06, 0x49, 0x49, 0x29, 0x1E}  // 9
+            };
+            pixel = (font[digit][r] & (1 << (4 - b))) != 0;
+          } else if (c == ':') {
+            pixel = (r == 2 || r == 4) && b == 2;
+          } else if (c == '%') {
+            pixel = ((r == 0 || r == 6) && b < 4) || ((r == 1 || r == 5) && (b == 0 || b == 3)) || ((r == 2 || r == 4) && (b == 1 || b == 2)) || (r == 3 && b == 2);
+          } else if (c == ' ') {
+            pixel = false;
+          } else {
+            // Default to block for unknown chars
+            pixel = true;
+          }
+          if (pixel) mx.setPoint(r, charStart + b, !isInverse);
+        }
+      }
+    }
   }
 }
 

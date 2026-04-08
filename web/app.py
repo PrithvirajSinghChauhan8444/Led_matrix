@@ -6,6 +6,7 @@ import time
 import threading
 import sys
 from flask import Flask, render_template, request, Response
+from system_monitor import SystemMonitor
 
 app = Flask(__name__)
 
@@ -22,6 +23,11 @@ SLEEP_AFTER_SECS  = 300  # Very long idle → SLEEP
 
 last_interaction = time.time()  # Updated on every chat message
 current_mood = "NORMAL"  # Live mood tracker for the frontend
+
+# --- Stats cycling for idle display ---
+stats_index = 0
+stats_cycle_timer = 0
+stats_labels = ["Time", "Battery", "CPU", "GPU", "RAM", "Uptime", "Internet"]
 
 # --- Emotion metrics: count how many times each mood has been triggered ---
 emotion_stats = {
@@ -109,6 +115,63 @@ def get_weather():
     except Exception:
         return None, "NORMAL"
 
+
+def _human_size(value):
+    if value is None:
+        return "N/A"
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f}{unit}"
+        value /= 1024
+    return f"{value:.1f}PB"
+
+
+def _human_duration(seconds):
+    if seconds is None or seconds < 0:
+        return "N/A"
+    seconds = int(seconds)
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {sec}s"
+    return f"{sec}s"
+
+
+def build_system_status_prompt(snapshot):
+    parts = [
+        f"CPU {snapshot['cpu_percent']:.0f}%",
+        f"RAM {snapshot['ram_percent']:.0f}%",
+        f"Disk {snapshot['disk_free_percent']:.0f}% free",
+    ]
+
+    if snapshot.get("battery_percent") is not None:
+        plugged = "plugged in" if snapshot.get("battery_plugged") else "discharging"
+        parts.append(f"Battery {snapshot['battery_percent']:.0f}% ({plugged})")
+
+    if snapshot.get("cpu_temp_c") is not None:
+        parts.append(f"CPU {snapshot['cpu_temp_c']:.0f}°C")
+    if snapshot.get("gpu_temp_c") is not None:
+        parts.append(f"GPU {snapshot['gpu_temp_c']:.0f}°C")
+
+    if snapshot.get("network_up") is not None:
+        parts.append("Network up" if snapshot["network_up"] else "Network down")
+
+    if snapshot.get("network_sent_rate") is not None and snapshot.get("network_recv_rate") is not None:
+        parts.append(
+            f"up {_human_size(snapshot['network_sent_rate'])}/s down {_human_size(snapshot['network_recv_rate'])}/s"
+        )
+
+    parts.append(f"Uptime {_human_duration(snapshot.get('uptime_secs'))}")
+    parts.append(f"Time {snapshot.get('time_of_day', 'unknown')}")
+
+    return "SYSTEM STATUS: " + ", ".join(parts)
+
+
 def set_esp32_mood(mood_name):
     global current_mood
     if ESP32_IP == "YOUR_ESP32_IP_HERE": return
@@ -120,6 +183,11 @@ def set_esp32_mood(mood_name):
         requests.get(f"http://{ESP32_IP}/mood?set={mood_id}", timeout=1)
     except Exception:
         pass
+
+
+system_monitor = SystemMonitor()
+system_monitor.start()
+
 
 def _play_idle(mood_id):
     """Play idle animation without calling set_esp32_mood (avoids recursion)."""
@@ -139,6 +207,7 @@ def _play_idle(mood_id):
 
 def idle_loop():
     """Background thread: drifts EmoBot mood when user is idle."""
+    global stats_index, stats_cycle_timer
     prev_state = None
     while True:
         time.sleep(10)
@@ -151,7 +220,7 @@ def idle_loop():
         elif elapsed > BORED_AFTER_SECS:
             state = "BORED"
         elif elapsed > NORMAL_AFTER_SECS:
-            state = "NORMAL"
+            state = "STATS"
         else:
             state = None
 
@@ -166,6 +235,52 @@ def idle_loop():
                 _play_idle(MOOD_MAP["BORED"]) # Mood 14 (Eyes)
             else:
                 _set_esp32_mode(15) # Mode 15 (Bounce Game)
+        elif state == "STATS":
+            # Send stats to ESP32 for display
+            snapshot = system_monitor.get_snapshot()
+            stat_text = ""
+            if stats_labels[stats_index] == "Time":
+                import datetime
+                now = datetime.datetime.now()
+                stat_text = f"Time: {now.strftime('%H:%M')}"
+            elif stats_labels[stats_index] == "Battery":
+                if snapshot.get("battery_percent") is not None:
+                    plugged = "Charging" if snapshot.get("battery_plugged") else "Discharging"
+                    stat_text = f"Battery: {snapshot['battery_percent']}% {plugged}"
+                else:
+                    stat_text = "Battery: N/A"
+            elif stats_labels[stats_index] == "CPU":
+                cpu = snapshot.get("cpu_percent", "N/A")
+                temp = snapshot.get("cpu_temp_c", "N/A")
+                stat_text = f"CPU: {cpu}% {temp}C"
+            elif stats_labels[stats_index] == "GPU":
+                temp = snapshot.get("gpu_temp_c", "N/A")
+                stat_text = f"GPU: {temp}C"
+            elif stats_labels[stats_index] == "RAM":
+                ram = snapshot.get("ram_percent", "N/A")
+                stat_text = f"RAM: {ram}%"
+            elif stats_labels[stats_index] == "Uptime":
+                secs = snapshot.get("uptime_secs", 0)
+                days = secs // 86400
+                hours = (secs % 86400) // 3600
+                mins = (secs % 3600) // 60
+                stat_text = f"Uptime: {days:02d}:{hours:02d}:{mins:02d}:{secs%60:02d}"
+            elif stats_labels[stats_index] == "Internet":
+                net_up = snapshot.get("network_up", False)
+                stat_text = f"Internet: {'Active' if net_up else 'Down'}"
+
+            # Send to ESP32
+            try:
+                requests.get(f"http://{ESP32_IP}/text?msg={stat_text}", timeout=1)
+                requests.get(f"http://{ESP32_IP}/mode?set=99", timeout=1)
+            except Exception:
+                pass
+
+            # Cycle to next stat every 5 seconds
+            stats_cycle_timer += 10
+            if stats_cycle_timer >= 50:
+                stats_index = (stats_index + 1) % len(stats_labels)
+                stats_cycle_timer = 0
         elif state == "NORMAL":
             _play_idle(MOOD_MAP["NORMAL"])
 
@@ -195,6 +310,17 @@ def get_current_mood():
         "idle_secs": elapsed,
         "idle_state": idle_state,
         "stats": emotion_stats
+    }
+
+@app.route("/system_status")
+def system_status():
+    snapshot = system_monitor.get_snapshot()
+    return {
+        "system": snapshot,
+        "override": {
+            "mood": snapshot.get("override_mood"),
+            "reason": snapshot.get("override_reason"),
+        },
     }
 
 @app.route("/control", methods=["POST"])
@@ -235,9 +361,17 @@ def chat():
     
     if not messages or messages[0].get("role") != "system":
         weather_info, _ = get_weather()
+        system_status = system_monitor.get_snapshot()
         prompt = SYSTEM_PROMPT
         if weather_info:
             prompt += f"\n\nCURRENT CONTEXT: The weather outside is {weather_info}. If relevant, you can react to it!"
+        prompt += f"\n\n{build_system_status_prompt(system_status)}"
+        if system_status.get("override_mood"):
+            prompt += (
+                f"\n\nSYSTEM WARNING: EmoBot should feel {system_status['override_mood']} "
+                f"because {system_status['override_reason']}."
+            )
+            set_esp32_mood(system_status["override_mood"])
         messages.insert(0, {"role": "system", "content": prompt})
         
     def generate():
