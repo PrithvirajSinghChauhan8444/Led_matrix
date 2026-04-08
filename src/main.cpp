@@ -30,7 +30,6 @@ bool wifiConnected = false;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 String networkText = "";
-int scrollPos = 0;
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
@@ -94,18 +93,6 @@ bool flip        = false;
 // Frame buffer — written by web handler, read by loop().
 // Protected by frameMutex to prevent mid-write tearing.
 uint8_t customFrame[256] = {0};
-
-// --- System Stats ---
-String currentTime = "";
-String batteryStatus = "";
-String cpuStatus = "";
-String gpuStatus = "";
-String ramStatus = "";
-String uptimeStatus = "";
-String internetStatus = "";
-unsigned long lastStatsFetch = 0;
-int statsIndex = 0;
-String statsList[7];
 
 // --- RoboEyes state ---
 volatile int  roboMood      = 0;
@@ -518,7 +505,7 @@ void drawBounceGame() {
 }
 
 void animNetwork() {
-  // Scroll text across the matrix
+  // Display static centered text
   if (networkText.length() == 0) {
     // Fallback to simple indicator
     if ((millis() / 500) % 2 == 0) {
@@ -528,16 +515,20 @@ void animNetwork() {
     return;
   }
 
-  // Scroll speed
-  if ((millis() / 200) % 1 == 0) { // Every 200ms
-    scrollPos++;
-    if (scrollPos > networkText.length() * 6 + 32) scrollPos = 0; // Reset after scrolling off
+  // Text width: 6 pixels per char (5 + 1 gap). Leave 1px padding on each side.
+  String displayText = networkText;
+  int textWidth = displayText.length() * 6 - 1;
+  if (textWidth > 32) {
+    // Use only the last 5 visible chars for long text
+    displayText = displayText.substring(displayText.length() - 5);
+    textWidth = 5 * 6 - 1;
   }
+  int startC = max(0, (32 - textWidth) / 2);
 
-  // Draw scrolling text
-  for (int i = 0; i < networkText.length(); i++) {
-    char c = networkText[i];
-    int charStart = i * 6 - scrollPos;
+  // Draw static text
+  for (int i = 0; i < displayText.length(); i++) {
+    char c = displayText[i];
+    int charStart = startC + i * 6;
     if (charStart > 31 || charStart < -5) continue;
 
     // Simple 5x7 font for each char
@@ -560,11 +551,41 @@ void animNetwork() {
               {0x36, 0x49, 0x49, 0x49, 0x36}, // 8
               {0x06, 0x49, 0x49, 0x29, 0x1E}  // 9
             };
-            pixel = (font[digit][r] & (1 << (4 - b))) != 0;
+            pixel = (font[digit][b] & (1 << r)) != 0;
           } else if (c == ':') {
             pixel = (r == 2 || r == 4) && b == 2;
           } else if (c == '%') {
             pixel = ((r == 0 || r == 6) && b < 4) || ((r == 1 || r == 5) && (b == 0 || b == 3)) || ((r == 2 || r == 4) && (b == 1 || b == 2)) || (r == 3 && b == 2);
+          } else if (c == '+') {
+            pixel = (r == 1 && b == 2) || (r == 2 && b == 2) || (r == 3 && b == 2) || (r == 2 && b == 1) || (r == 2 && b == 3);
+          } else if (c == '-') {
+            pixel = (r == 2 && b >= 1 && b <= 3);
+          } else if (c == 'O') {
+            pixel = ((r == 0 || r == 6) && (b >= 1 && b <= 3)) || ((r >= 1 && r <= 5) && (b == 0 || b == 4));
+          } else if (c == 'N') {
+            pixel = (b == 0 || b == 4) || (r == b);
+          } else if (c == 'F') {
+            pixel = b == 0 || (r == 0 && b <= 3) || (r == 3 && b <= 3);
+          } else if (c == 'B') {
+            pixel = b == 0 || ((r == 0 || r == 3 || r == 6) && b <= 3) || ((r == 1 || r == 2 || r == 4 || r == 5) && b == 4);
+          } else if (c == 'C') {
+            pixel = b == 0 || r == 0 || r == 6;
+          } else if (c == 'G') {
+            pixel = b == 0 || r == 0 || r == 6 || r == 3 || (b == 4 && r >= 3);
+          } else if (c == 'R') {
+            pixel = b == 0 || (r == 0 && b < 4) || (r == 3 && b < 4) || ((r == 1 || r == 2) && b == 4) || ((r == 4 || r == 5) && b == 3);
+          } else if (c == 'H') {
+            pixel = b == 0 || b == 4 || r == 3;
+          } else if (c == 'U') {
+            pixel = (b == 0 || b == 4) || (r == 6 && b >= 1 && b <= 3);
+          } else if (c == 'P') {
+            pixel = b == 0 || (r == 0 && b <= 3) || (r == 3 && b <= 3) || ((r == 1 || r == 2) && b == 4);
+          } else if (c == 'A') {
+            pixel = b == 0 || b == 4 || r == 0 || r == 3;
+          } else if (c == 'I') {
+            pixel = b == 2 || r == 0 || r == 6;
+          } else if (c == 'T') {
+            pixel = r == 0 || b == 2;
           } else if (c == ' ') {
             pixel = false;
           } else {

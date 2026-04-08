@@ -28,6 +28,7 @@ current_mood = "NORMAL"  # Live mood tracker for the frontend
 stats_index = 0
 stats_cycle_timer = 0
 stats_labels = ["Time", "Battery", "CPU", "GPU", "RAM", "Uptime", "Internet"]
+manual_stats = False
 
 # --- Emotion metrics: count how many times each mood has been triggered ---
 emotion_stats = {
@@ -207,7 +208,7 @@ def _play_idle(mood_id):
 
 def idle_loop():
     """Background thread: drifts EmoBot mood when user is idle."""
-    global stats_index, stats_cycle_timer
+    global stats_index, stats_cycle_timer, manual_stats
     prev_state = None
     while True:
         time.sleep(10)
@@ -215,7 +216,9 @@ def idle_loop():
         hour = time.localtime().tm_hour
         sleep_threshold = SLEEP_AFTER_SECS // 2 if (hour >= 23 or hour < 6) else SLEEP_AFTER_SECS
 
-        if elapsed > sleep_threshold:
+        if manual_stats:
+            state = "STATS"
+        elif elapsed > sleep_threshold:
             state = "SLEEP"
         elif elapsed > BORED_AFTER_SECS:
             state = "BORED"
@@ -242,32 +245,39 @@ def idle_loop():
             if stats_labels[stats_index] == "Time":
                 import datetime
                 now = datetime.datetime.now()
-                stat_text = f"Time: {now.strftime('%H:%M')}"
+                stat_text = now.strftime("%H:%M")
             elif stats_labels[stats_index] == "Battery":
                 if snapshot.get("battery_percent") is not None:
-                    plugged = "Charging" if snapshot.get("battery_plugged") else "Discharging"
-                    stat_text = f"Battery: {snapshot['battery_percent']}% {plugged}"
+                    plugged = "+" if snapshot.get("battery_plugged") else "-"
+                    stat_text = f"B{snapshot['battery_percent']}{plugged}"
                 else:
-                    stat_text = "Battery: N/A"
+                    stat_text = "B N/A"
             elif stats_labels[stats_index] == "CPU":
-                cpu = snapshot.get("cpu_percent", "N/A")
-                temp = snapshot.get("cpu_temp_c", "N/A")
-                stat_text = f"CPU: {cpu}% {temp}C"
+                cpu = snapshot.get("cpu_percent")
+                if cpu is not None:
+                    stat_text = f"C{int(cpu)}%"
+                else:
+                    stat_text = "C N/A"
             elif stats_labels[stats_index] == "GPU":
-                temp = snapshot.get("gpu_temp_c", "N/A")
-                stat_text = f"GPU: {temp}C"
+                temp = snapshot.get("gpu_temp_c")
+                if temp is not None:
+                    stat_text = f"G{int(temp)}C"
+                else:
+                    stat_text = "G N/A"
             elif stats_labels[stats_index] == "RAM":
-                ram = snapshot.get("ram_percent", "N/A")
-                stat_text = f"RAM: {ram}%"
+                ram = snapshot.get("ram_percent")
+                if ram is not None:
+                    stat_text = f"R{int(ram)}%"
+                else:
+                    stat_text = "R N/A"
             elif stats_labels[stats_index] == "Uptime":
                 secs = snapshot.get("uptime_secs", 0)
-                days = secs // 86400
-                hours = (secs % 86400) // 3600
+                hours = secs // 3600
                 mins = (secs % 3600) // 60
-                stat_text = f"Uptime: {days:02d}:{hours:02d}:{mins:02d}:{secs%60:02d}"
+                stat_text = f"U{hours}:{mins:02d}"
             elif stats_labels[stats_index] == "Internet":
                 net_up = snapshot.get("network_up", False)
-                stat_text = f"Internet: {'Active' if net_up else 'Down'}"
+                stat_text = "ON" if net_up else "OFF"
 
             # Send to ESP32
             try:
@@ -322,6 +332,60 @@ def system_status():
             "reason": snapshot.get("override_reason"),
         },
     }
+
+@app.route("/show_stats")
+def show_stats():
+    global manual_stats, last_interaction, stats_index, stats_cycle_timer
+    manual_stats = True
+    last_interaction = time.time()  # Reset idle to prevent sleep
+    stats_index = 0
+    stats_cycle_timer = 0
+    # Send first stat
+    snapshot = system_monitor.get_snapshot()
+    stat_text = ""
+    if stats_labels[stats_index] == "Time":
+        import datetime
+        now = datetime.datetime.now()
+        stat_text = now.strftime("%H:%M")
+    elif stats_labels[stats_index] == "Battery":
+        if snapshot.get("battery_percent") is not None:
+            plugged = "+" if snapshot.get("battery_plugged") else "-"
+            stat_text = f"B{snapshot['battery_percent']}{plugged}"
+        else:
+            stat_text = "B N/A"
+    elif stats_labels[stats_index] == "CPU":
+        cpu = snapshot.get("cpu_percent")
+        if cpu is not None:
+            stat_text = f"C{int(cpu)}%"
+        else:
+            stat_text = "C N/A"
+    elif stats_labels[stats_index] == "GPU":
+        temp = snapshot.get("gpu_temp_c")
+        if temp is not None:
+            stat_text = f"G{int(temp)}C"
+        else:
+            stat_text = "G N/A"
+    elif stats_labels[stats_index] == "RAM":
+        ram = snapshot.get("ram_percent")
+        if ram is not None:
+            stat_text = f"R{int(ram)}%"
+        else:
+            stat_text = "R N/A"
+    elif stats_labels[stats_index] == "Uptime":
+        secs = snapshot.get("uptime_secs", 0)
+        hours = secs // 3600
+        mins = (secs % 3600) // 60
+        stat_text = f"U{hours}:{mins:02d}"
+    elif stats_labels[stats_index] == "Internet":
+        net_up = snapshot.get("network_up", False)
+        stat_text = "ON" if net_up else "OFF"
+
+    try:
+        requests.get(f"http://{ESP32_IP}/text?msg={stat_text}", timeout=1)
+        requests.get(f"http://{ESP32_IP}/mode?set=99", timeout=1)
+    except Exception:
+        pass
+    return {"status": "stats started"}
 
 @app.route("/control", methods=["POST"])
 def manual_control():

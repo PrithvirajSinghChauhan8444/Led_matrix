@@ -143,6 +143,10 @@ function control(action, value) {
     });
 }
 
+function showStats() {
+    fetch('/show_stats');
+}
+
 // --- Live mood polling ---
 const BAR_COLORS = {
     HAPPY:'#22c55e', SAD:'#3b82f6', ANGRY:'#ef4444', NAUGHTY:'#f97316',
