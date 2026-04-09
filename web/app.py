@@ -333,59 +333,53 @@ def system_status():
         },
     }
 
-@app.route("/show_stats")
-def show_stats():
-    global manual_stats, last_interaction, stats_index, stats_cycle_timer
-    manual_stats = True
-    last_interaction = time.time()  # Reset idle to prevent sleep
-    stats_index = 0
-    stats_cycle_timer = 0
-    # Send first stat
+@app.route("/show_stat/<stat_name>")
+def trigger_stat(stat_name):
+    global manual_stats, last_interaction, stats_index
+    # Map friendly names to internal indices if needed, or just send immediately
     snapshot = system_monitor.get_snapshot()
-    stat_text = ""
-    if stats_labels[stats_index] == "Time":
+    stat_text = "N/A"
+    
+    if stat_name.lower() == "time":
         import datetime
-        now = datetime.datetime.now()
-        stat_text = now.strftime("%H:%M")
-    elif stats_labels[stats_index] == "Battery":
+        stat_text = datetime.datetime.now().strftime("%H:%M")
+    elif stat_name.lower() == "battery":
         if snapshot.get("battery_percent") is not None:
             plugged = "+" if snapshot.get("battery_plugged") else "-"
             stat_text = f"B{snapshot['battery_percent']}{plugged}"
-        else:
-            stat_text = "B N/A"
-    elif stats_labels[stats_index] == "CPU":
+    elif stat_name.lower() == "cpu":
         cpu = snapshot.get("cpu_percent")
-        if cpu is not None:
-            stat_text = f"C{int(cpu)}%"
-        else:
-            stat_text = "C N/A"
-    elif stats_labels[stats_index] == "GPU":
-        temp = snapshot.get("gpu_temp_c")
-        if temp is not None:
-            stat_text = f"G{int(temp)}C"
-        else:
-            stat_text = "G N/A"
-    elif stats_labels[stats_index] == "RAM":
+        stat_text = f"C{int(cpu)}%" if cpu is not None else "C N/A"
+    elif stat_name.lower() == "ram":
         ram = snapshot.get("ram_percent")
-        if ram is not None:
-            stat_text = f"R{int(ram)}%"
-        else:
-            stat_text = "R N/A"
-    elif stats_labels[stats_index] == "Uptime":
+        stat_text = f"R{int(ram)}%" if ram is not None else "R N/A"
+    elif stat_name.lower() == "uptime":
         secs = snapshot.get("uptime_secs", 0)
         hours = secs // 3600
         mins = (secs % 3600) // 60
         stat_text = f"U{hours}:{mins:02d}"
-    elif stats_labels[stats_index] == "Internet":
-        net_up = snapshot.get("network_up", False)
-        stat_text = "ON" if net_up else "OFF"
+    elif stat_name.lower() == "stop":
+        manual_stats = False
+        return {"status": "cycling stopped"}
 
+    manual_stats = True
+    last_interaction = time.time()
+    
     try:
         requests.get(f"http://{ESP32_IP}/text?msg={stat_text}", timeout=1)
         requests.get(f"http://{ESP32_IP}/mode?set=99", timeout=1)
     except Exception:
         pass
-    return {"status": "stats started"}
+    return {"status": f"stat {stat_name} triggered", "text": stat_text}
+
+@app.route("/show_stats")
+def show_stats_cycle():
+    global manual_stats, last_interaction, stats_index, stats_cycle_timer
+    manual_stats = True
+    last_interaction = time.time()
+    stats_index = 0
+    stats_cycle_timer = 0
+    return {"status": "stats cycling started"}
 
 @app.route("/control", methods=["POST"])
 def manual_control():

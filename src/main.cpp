@@ -33,49 +33,61 @@ String networkText = "";
 
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LED Matrix Control Panel</title>
-  <style>
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #1a1a2e; color: #fff; margin: 0; padding: 20px; }
-    h1 { color: #4ecca3; margin-bottom: 30px; }
-    h3 { color: #eeeeee; border-bottom: 1px solid #333; padding-bottom: 10px; max-width: 600px; margin: 20px auto; }
-    .btn { display: inline-block; padding: 12px 20px; font-size: 16px; font-weight: bold; cursor: pointer; 
-           text-align: center; outline: none; border: none; border-radius: 8px; margin: 8px; width: 140px; 
-           color: #1a1a2e; background-color: #4ecca3; box-shadow: 0 4px #3b9b7c; transition: all 0.1s ease; }
-    .btn:hover { background-color: #45b793; }
-    .btn:active { background-color: #3b9b7c; box-shadow: 0 1px #2a6f59; transform: translateY(3px); }
-    .sys-btn { background-color: #e94560; box-shadow: 0 4px #b8364a; color: white; }
-    .sys-btn:hover { background-color: #d13d56; }
-    .sys-btn:active { background-color: #b8364a; box-shadow: 0 1px #8f2a3a; transform: translateY(3px); }
-    .container { max-width: 800px; margin: 0 auto; }
-  </style>
-  <script>
-    function setMode(mode) { fetch('/mode?set=' + mode); }
-    function setMood(mood) { fetch('/mood?set=' + mood); }
-    function sendCmd(cmd) { fetch('/cmd?c=' + encodeURIComponent(cmd)); }
-  </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EMO CONTROL</title>
+    <style>
+        :root { --bg: #000; --fg: #fff; --accent: #fff; --gray: #222; }
+        body { background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; padding: 2rem; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        .container { width: 100%; max-width: 400px; border: 1px solid var(--gray); padding: 2rem; border-radius: 4px; box-sizing: border-box; }
+        h1 { font-size: 1rem; letter-spacing: 0.4rem; margin-bottom: 2.5rem; font-weight: 300; text-align: center; text-transform: uppercase; }
+        .section { margin-bottom: 2rem; }
+        .section-title { font-size: 0.65rem; text-transform: uppercase; color: #555; margin-bottom: 1rem; letter-spacing: 0.15rem; border-bottom: 1px solid #111; padding-bottom: 0.5rem; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+        button { background: transparent; color: var(--fg); border: 1px solid var(--gray); padding: 0.9rem; cursor: pointer; font-size: 0.75rem; transition: all 0.2s; border-radius: 2px; text-transform: uppercase; letter-spacing: 0.05rem; }
+        button:hover { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+        button:active { transform: scale(0.96); opacity: 0.8; }
+        .full { grid-column: span 2; }
+        .status { margin-top: 2rem; font-size: 0.6rem; color: #333; text-align: center; letter-spacing: 0.1rem; }
+    </style>
+    <script>
+        function set(path, val) { fetch(`/${path}?set=${val}`); }
+        function cmd(c) { fetch(`/cmd?c=${encodeURIComponent(c)}`); }
+    </script>
 </head>
 <body>
-  <div class="container">
-    <h1>LED Matrix Control Panel</h1>
-    
-    <h3>Animations</h3>
-    <button class="btn" onclick="setMode('2')">Robo Eyes</button>
-    <button class="btn" onclick="setMode('a')">Playful Dog</button>
-    <button class="btn" onclick="setMode('15')">Start Game</button>
-    <button class="btn" style="background-color:#f9d949; color:#1a1a2e;" onclick="setMood(16)">Stars</button>
-    <button class="btn" style="background-color:#ff4d4d; color:#fff;" onclick="setMood(17)">Dance</button>
-    <button class="btn" style="background-color:#4ecca3; color:#1a1a2e;" onclick="setMood(18)">Sing</button>
-    <button class="btn" style="background-color:#533483; color:#fff; box-shadow:0 4px #3d2661;" onclick="setMode('99')">Network Mode</button>
-    
-    <br><br>
-    <h3>Display Settings</h3>
-    <button class="btn sys-btn" onclick="sendCmd('+')">Brightness +</button>
-    <button class="btn sys-btn" onclick="sendCmd('-')">Brightness -</button>
-    <button class="btn sys-btn" onclick="sendCmd('i')">Invert LEDs</button>
-  </div>
+    <div class="container">
+        <h1>EMOBOT / CORE</h1>
+        <div class="section">
+            <div class="section-title">System Modes</div>
+            <div class="grid">
+                <button onclick="set('mode','2')">Eyes</button>
+                <button onclick="set('mode','a')">Dog</button>
+                <button onclick="set('mode','15')">Game</button>
+                <button onclick="set('mode','99')">Text</button>
+            </div>
+        </div>
+        <div class="section">
+            <div class="section-title">Expression</div>
+            <div class="grid">
+                <button onclick="set('mood',16)">Stars</button>
+                <button onclick="set('mood',17)">Dance</button>
+                <button onclick="set('mood',18)">Sing</button>
+                <button onclick="set('mood','auto')">Auto</button>
+            </div>
+        </div>
+        <div class="section">
+            <div class="section-title">Hardware</div>
+            <div class="grid">
+                <button onclick="cmd('+')">Light +</button>
+                <button onclick="cmd('-')">Light -</button>
+                <button class="full" onclick="cmd('i')">Invert Signal</button>
+            </div>
+        </div>
+        <div class="status">V2.4 / CONNECTION STABLE</div>
+    </div>
 </body>
 </html>
 )rawliteral";
@@ -105,10 +117,22 @@ int roboEyeX = 0, roboEyeY = 0, roboMoveTimer = 0;
 int dogX = 12, dogTargetX = 12, dogState = 0, dogTimer = 0, dogAnimFrame = 0, dogDir = 1;
 int ballX = -1, ballY = -1, ballVX = 0, ballVY = 0, poopX = -1;
 
+// ==================== 1. CORE DRAWING WRAPPER ====================
+// This handles 180 rotation globally
+void drawPixel(int r, int c, bool on) {
+  if (r < 0 || r >= 8 || c < 0 || c >= 32) return;
+  
+  // APPLY 180 ROTATION: (7-r, 31-c)
+  int finalR = 7 - r;
+  int finalC = 31 - c;
+  
+  mx.setPoint(finalR, finalC, on ? !isInverse : isInverse);
+}
+
 // ==================== 2. ROBO EYES (FluxGarage style) ====================
 void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
   auto draw = [&](int r, int c, bool on) {
-    if (r >= 0 && r < 8 && c >= 0 && c < 32) mx.setPoint(r, c, on ? !isInverse : isInverse);
+    drawPixel(r, c, on);
   };
   
   int height = 5;
@@ -364,7 +388,7 @@ void animRoboEyes() {
 void drawDog(int x, int state, int frame, int dir) {
   auto draw = [&](int r, int relC, bool on) {
     int drawC = x + (relC * dir);
-    if (drawC >= 0 && drawC < 32 && r >= 0 && r < 8) mx.setPoint(r, drawC, on ? !isInverse : isInverse);
+    drawPixel(r, drawC, on);
   };
   
   // Head
@@ -443,11 +467,11 @@ void animDog() {
   } else { ballX = -1; }
 
   if (poopX >= 0 && poopX < 32) {
-    mx.setPoint(7, poopX, !isInverse); mx.setPoint(7, poopX+1, !isInverse); mx.setPoint(6, poopX+1, !isInverse);
+    drawPixel(7, poopX, true); drawPixel(7, poopX+1, true); drawPixel(6, poopX+1, true);
   }
   if (ballX >= 0 && ballX < 31 && ballY >= 0 && ballY < 7) {
-    mx.setPoint(ballY, ballX, !isInverse); mx.setPoint(ballY+1, ballX, !isInverse);
-    mx.setPoint(ballY, ballX+1, !isInverse); mx.setPoint(ballY+1, ballX+1, !isInverse);
+    drawPixel(ballY, ballX, true); drawPixel(ballY+1, ballX, true);
+    drawPixel(ballY, ballX+1, true); drawPixel(ballY+1, ballX+1, true);
   }
   drawDog(dogX, dogState, dogAnimFrame, dogDir);
 }
@@ -494,13 +518,13 @@ void drawBounceGame() {
   // Draw ball and a short trail (no eye — full screen game)
   int bx = (int)ballQX;
   int by = (int)ballQY;
-  mx.setPoint(by, bx, !isInverse);
+  drawPixel(by, bx, true);
   
   // Trail (previous position approximation)
   int tx = (int)(ballQX - ballQVX);
   int ty = (int)(ballQY - ballQVY);
   if (tx >= 0 && tx <= 31 && ty >= 0 && ty <= 7) {
-    mx.setPoint(ty, tx, !isInverse);
+    drawPixel(ty, tx, true);
   }
 }
 
@@ -592,7 +616,7 @@ void animNetwork() {
             // Default to block for unknown chars
             pixel = true;
           }
-          if (pixel) mx.setPoint(r, charStart + b, !isInverse);
+          if (pixel) drawPixel(r, charStart + b, true);
         }
       }
     }
@@ -611,7 +635,7 @@ void setup() {
   unsigned long wifiStart = millis();
   int dot = 0;
   while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 8000) {
-    mx.setPoint(4, dot % 32, true);
+    drawPixel(4, dot % 32, true);
     dot++;
     delay(200);
     Serial.print(".");
@@ -680,6 +704,15 @@ void setup() {
       request->send(200, "text/plain", "Text updated");
     });
 
+    server.on("/intensity", HTTP_GET, [](AsyncWebServerRequest *request){
+      if(request->hasParam("set")){
+        intensity = request->getParam("set")->value().toInt();
+        intensity = constrain(intensity, 0, 15);
+        mx.control(MD_MAX72XX::INTENSITY, intensity);
+      }
+      request->send(200, "text/plain", "Intensity updated");
+    });
+
     server.begin();
     Serial.println("Web Server running on port 80");
   } else {
@@ -692,8 +725,8 @@ void setup() {
     mx.clear();
     // Expand height gradually
     for(int r=4-h/2; r<=4+h/2; r++) {
-      for(int c=6; c<11; c++) mx.setPoint(r, c, !isInverse);
-      for(int c=20; c<25; c++) mx.setPoint(r, c, !isInverse);
+      for(int c=6; c<11; c++) drawPixel(r, c, true);
+      for(int c=20; c<25; c++) drawPixel(r, c, true);
     }
     mx.update();
     delay(150);

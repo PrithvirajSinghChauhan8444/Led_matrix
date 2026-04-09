@@ -19,30 +19,15 @@ function appendMessage(role, text) {
 
 function updateMood(tag) {
     moodBadge.textContent = tag;
-    moodBadge.classList.remove('glitch');
-    if (tag === 'SCARE' || tag === 'ANGRY') {
-        moodBadge.classList.add('glitch');
-        moodBadge.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
-    } else if (tag === 'HAPPY' || tag === 'DANCE') {
-        moodBadge.style.background = 'linear-gradient(135deg, #22c55e, #16a34a)';
-    } else if (tag === 'SAD') {
-        moodBadge.style.background = 'linear-gradient(135deg, #3b82f6, #1d4ed8)';
-    } else if (tag === 'NAUGHTY' || tag === 'SUSPICIOUS') {
-        moodBadge.style.background = 'linear-gradient(135deg, #f97316, #ea580c)';
-    } else if (tag === 'JEALOUS') {
-        moodBadge.style.background = 'linear-gradient(135deg, #84cc16, #65a30d)';
-    } else if (tag === 'SING') {
-        moodBadge.style.background = 'linear-gradient(135deg, #06b6d4, #0891b2)';
-    } else if (tag === 'STARS') {
-        moodBadge.style.background = 'linear-gradient(135deg, #eab308, #ca8a04)';
-    } else if (tag === 'SLEEP') {
-        moodBadge.style.background = 'linear-gradient(135deg, #6366f1, #4f46e5)';
-    } else if (tag === 'BORED') {
-        moodBadge.style.background = 'linear-gradient(135deg, #78716c, #57534e)';
-    } else if (tag.startsWith('WEATHER')) {
-        moodBadge.style.background = 'linear-gradient(135deg, #eab308, #f97316)';
+    moodBadge.style.background = 'transparent';
+    moodBadge.style.color = '#fff';
+    moodBadge.style.borderColor = '#222';
+    
+    if (tag === 'NORMAL') {
+        moodBadge.style.color = '#666';
     } else {
-        moodBadge.style.background = 'linear-gradient(135deg, #ec4899, #8b5cf6)';
+        moodBadge.style.color = '#fff';
+        moodBadge.style.borderColor = '#fff';
     }
 }
 
@@ -147,12 +132,24 @@ function showStats() {
     fetch('/show_stats');
 }
 
+async function triggerStat(name) {
+    try {
+        const res = await fetch(`/show_stat/${name}`);
+        const data = await res.json();
+        if (data.text) {
+            appendMessage('assistant', `[SYSTEM] ${name.toUpperCase()}: ${data.text}`);
+        }
+    } catch (e) {
+        console.error("Stat trigger failed", e);
+    }
+}
+
 // --- Live mood polling ---
 const BAR_COLORS = {
-    HAPPY:'#22c55e', SAD:'#3b82f6', ANGRY:'#ef4444', NAUGHTY:'#f97316',
-    SUSPICIOUS:'#fb923c', JEALOUS:'#84cc16', ANNOYED:'#f43f5e', SICK:'#a3e635',
-    SCARE:'#dc2626', BORED:'#78716c', SLEEP:'#6366f1', STARS:'#eab308',
-    DANCE:'#10b981', SING:'#06b6d4', NORMAL:'#8b5cf6'
+    HAPPY:'#fff', SAD:'#aaa', ANGRY:'#fff', NAUGHTY:'#fff',
+    SUSPICIOUS:'#888', JEALOUS:'#888', ANNOYED:'#888', SICK:'#444',
+    SCARE:'#fff', BORED:'#444', SLEEP:'#222', STARS:'#fff',
+    DANCE:'#fff', SING:'#fff', NORMAL:'#666'
 };
 
 setInterval(async () => {

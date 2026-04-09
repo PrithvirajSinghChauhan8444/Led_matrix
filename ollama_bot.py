@@ -4,6 +4,8 @@ import re
 import sys
 import time
 import threading
+import psutil
+import socket
 
 # --- CONFIGURATION ---
 ESP32_IP = "10.42.0.145"  
@@ -28,6 +30,13 @@ MOOD_MAP = {
     "SICK": 10, "SCARE": 11, "ANNOYED": 12,
     "SLEEP": 13, "BORED": 14, "GAME": 15,
     "STARS": 16, "DANCE": 17, "SING": 18
+}
+
+MODE_MAP = {
+    "ROBOEYES": 2,
+    "DOG": 12,
+    "GAME": 15,
+    "NETWORK": 99
 }
 
 SYSTEM_PROMPT = """You are EmoBot — a tiny, mischievous desktop pet robot who sits on someone's desk.
@@ -56,20 +65,24 @@ Tag guidance:
 - [STARS]: Use when amazed or dreamy.
 - [WEATHER_...]: ONLY when the user specifically asks about weather. Never use as a random expression.
 
-Format: [TAG] Spoken text.
+NEW CAPABILITIES:
+You can now TRIGGER MODES and SET BRIGHTNESS!
+- Use [MODE_DOG] to switch to your dog animation.
+- Use [MODE_ROBOEYES] to return to your face.
+- Use [MODE_GAME] to start a bouncing game.
+- Use [BRIGHTNESS_5] (range 0-15) to change LED brightness (use sparingly).
+
+Format: [TAG] [MODE_...] Spoken text.
 
 Examples:
-User: I got a new cat!
-EmoBot: [JEALOUS] A CAT?! You're replacing me with a FURBALL?! *angry beeping*
+User: Go play as a dog!
+EmoBot: [HAPPY] [MODE_DOG] Bark bark! I'm a dog now! *wags tail*
 
-User: Good morning!
-EmoBot: [NAUGHTY] Morning! I rearranged all your desktop icons while you were sleeping. You're welcome! *beep boop*
+User: It's too bright in here.
+EmoBot: [ANNOYED] [BRIGHTNESS_1] Fine, I'll dim down. Is this dark enough for you? *mumble mumble*
 
-User: Tell me a joke
-EmoBot: [HAPPY] Why do robots never get scared? Because they have nerves of STEEL! ...get it? *zap zap*
-
-User: I'm sad today
-EmoBot: [SAD] Oh no... come here. *nuzzles your hand with my tiny LED face* We can be sad together. But only for five minutes, then we dance.
+User: Check your stats.
+EmoBot: [NORMAL] My CPU is at 20% and I'm feeling quite snappy! *beep*
 """
 # --- WEATHER ---
 def get_weather():
@@ -98,19 +111,42 @@ def get_weather():
     except Exception:
         return None, "NORMAL"
 
+def get_system_stats():
+    """Fetches CPU, RAM, and Battery info."""
+    try:
+        cpu = psutil.cpu_percent(interval=None)
+        ram = psutil.virtual_memory().percent
+        batt = psutil.sensors_battery()
+        batt_str = f"{batt.percent}%" if batt else "Unknown"
+        plugged = batt.power_plugged if batt else True
+        charging = " (charging)" if (batt and plugged) else ""
+        return f"CPU: {cpu}%, RAM: {ram}%, Battery: {batt_str}{charging}"
+    except Exception:
+        return "System stats unavailable."
+
 def set_esp32_mood(mood_name):
-    if ESP32_IP == "YOUR_ESP32_IP_HERE": return 
+    if ESP32_IP == "YOUR_ESP32_IP_HERE" or not ESP32_IP: return 
     mood_id = MOOD_MAP.get(mood_name.upper(), 0)
     try:
         requests.get(f"http://{ESP32_IP}/mood?set={mood_id}", timeout=1)
-    except Exception as e:
+    except Exception:
         pass 
 
-def _set_esp32_mode(mode_id):
-    """Set the ESP32 mode directly."""
-    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+def _set_esp32_mode(mode_name):
+    """Set the ESP32 mode by name or ID string."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE" or not ESP32_IP: return
+    mode_id = MODE_MAP.get(mode_name.upper(), mode_name)
     try:
         requests.get(f"http://{ESP32_IP}/mode?set={mode_id}", timeout=1)
+    except Exception:
+        pass
+
+def set_esp32_brightness(level):
+    """Set the ESP32 brightness (0-15)."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE" or not ESP32_IP: return
+    try:
+        level = max(0, min(15, int(level)))
+        requests.get(f"http://{ESP32_IP}/intensity?set={level}", timeout=1)
     except Exception:
         pass
 
@@ -209,30 +245,45 @@ def chat_loop():
                     chunk = data["message"]["content"]
                     full_reply += chunk
                     
-                    # CHANGED: More robust parsing logic to prevent silent failures
+                    # Enhanced parsing for mood, mode, and brightness
                     if not tag_found:
                         tag_buffer += chunk
                         
                         if "]" in tag_buffer:
-                            match = re.search(r'\[(.*?)\]', tag_buffer)
-                            if match:
-                                emotion = match.group(1)
-                                set_esp32_mood(emotion) 
-                                text_after_tag = tag_buffer[match.end():]
-                                print(text_after_tag.lstrip(), end="", flush=True)
-                            else:
-                                print(tag_buffer, end="", flush=True)
-                            tag_found = True
+                            # Parse Mood
+                            mood_match = re.search(r'\[(NORMAL|HAPPY|ANGRY|SAD|SUSPICIOUS|JEALOUS|NAUGHTY|SICK|SCARE|ANNOYED|STARS|DANCE|SING|WEATHER_SUN|WEATHER_RAIN|WEATHER_SNOW)\]', tag_buffer, re.I)
+                            if mood_match:
+                                set_esp32_mood(mood_match.group(1))
                             
-                        # Fallback: If the model generated 20 chars without a bracket, it broke the rules. 
-                        # Stop waiting and just print it so you can see what it's saying.
-                        elif len(tag_buffer) > 20 and "[" not in tag_buffer:
+                            # Parse Mode
+                            mode_match = re.search(r'\[MODE_(.*?)\]', tag_buffer, re.I)
+                            if mode_match:
+                                _set_esp32_mode(mode_match.group(1))
+                                
+                            # Parse Brightness (simplified)
+                            bright_match = re.search(r'\[BRIGHTNESS_(\d+)\]', tag_buffer, re.I)
+                            # (Brightness logic skipped for now as ESP32 needs update)
+
+                            if "]" in tag_buffer:
+                                # Show text after the LAST bracket in the buffer
+                                last_bracket = tag_buffer.rfind("]")
+                                text_after_tag = tag_buffer[last_bracket+1:]
+                                if text_after_tag.strip() or len(tag_buffer) > 30:
+                                    print(text_after_tag.lstrip(), end="", flush=True)
+                                    tag_found = True
+                            
+                        elif len(tag_buffer) > 40 and "[" not in tag_buffer:
                             print(tag_buffer, end="", flush=True)
                             tag_found = True 
                     else:
                         print(chunk, end="", flush=True) 
-                        
-            print() 
+            
+            print()
+            # Periodically inject system stats into the conversation (every 3 turns)
+            if len(messages) % 6 == 0:
+                stats = get_system_stats()
+                messages.append({"role": "system", "content": f"SYSTEM STATUS: {stats}. Reaction required if anomalous."})
+
             messages.append({"role": "assistant", "content": full_reply})
             
             # Removed hardcoded NORMAL reset; let idle_loop handle it after 30s

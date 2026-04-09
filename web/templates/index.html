@@ -3,82 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emotional Companion AI</title>
+    <title>EMO / CONSOLE</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="circles">
-        <div class="circle circle-1"></div>
-        <div class="circle circle-2"></div>
-        <div class="circle circle-3"></div>
-    </div>
     <div class="glass-container main-layout">
         <div class="chat-section">
             <header>
-                <h1>EmoBot 🤖</h1>
+                <h1>EMOBOT / 01</h1>
                 <div id="mood-badge" class="mood-badge">NORMAL</div>
             </header>
-            <div id="live-stats" style="display:flex; gap:16px; justify-content:center; padding:8px 0; font-size:13px; color:#aaa; flex-wrap:wrap;">
-                <span>🎭 Mood: <strong id="stat-mood" style="color:#4ecca3">NORMAL</strong></span>
-                <span>🔢 ID: <strong id="stat-id" style="color:#4ecca3">0</strong></span>
-                <span>⏱️ Idle: <strong id="stat-idle" style="color:#4ecca3">0s</strong></span>
-                <span>📡 State: <strong id="stat-state" style="color:#4ecca3">ACTIVE</strong></span>
-            </div>
-            <div id="emotion-bars" style="padding:4px 12px 8px; font-size:12px; max-height:150px; overflow-y:auto;">
-                <div style="display:grid; grid-template-columns:80px 1fr 30px; gap:3px; align-items:center;" id="bars-container">
-                </div>
+            <div id="live-stats">
+                <span>MOOD: <strong id="stat-mood">NORMAL</strong></span> &nbsp;
+                <span>IDLE: <strong id="stat-idle">0s</strong></span> &nbsp;
+                <span>STATE: <strong id="stat-state">ACTIVE</strong></span>
             </div>
             <div class="chat-wrapper" id="chat-wrapper">
                 <div class="message assistant">
-                    <div class="bubble">Hello! I am your emotional companion. How are you feeling today?</div>
+                    <div class="bubble">SYSTEM INITIALIZED. STANDING BY.</div>
                 </div>
             </div>
             <div class="input-area">
-                <input type="text" id="user-input" placeholder="Say something..." autocomplete="off">
-                <button id="send-btn">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                      <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <input type="text" id="user-input" placeholder="INPUT COMMAND..." autocomplete="off">
+                <div id="send-btn" class="send-btn-wrap">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                      <path d="M22 2L11 13M22 2L15 22L11 13M11 13L2 9L22 2" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
-                </button>
+                </div>
             </div>
         </div>
         <div class="control-section">
-            <h3>Manual Controls</h3>
-            <h4>Modes & Settings</h4>
+            <h3>CONSOLE</h3>
+            
+            <h4>System Stats</h4>
             <div class="btn-grid">
-                <button onclick="control('mode', '2')">Robo Eyes</button>
-                <button onclick="control('mode', 'a')">Play Dog</button>
-                <button onclick="showStats()">Show Stats</button>
-                <button onclick="control('cmd', '+')">Bright +</button>
-                <button onclick="control('cmd', '-')">Bright -</button>
-                <button onclick="control('cmd', 'i')">Invert</button>
+                <button onclick="triggerStat('time')">Time</button>
+                <button onclick="triggerStat('cpu')">CPU %</button>
+                <button onclick="triggerStat('ram')">RAM %</button>
+                <button onclick="triggerStat('battery')">Battery</button>
+                <button onclick="triggerStat('uptime')" class="full">Uptime</button>
+                <button onclick="fetch('/show_stats')" style="color:#444">Cycle All</button>
+                <button onclick="triggerStat('stop')" style="color:#666">Stop Stats</button>
+            </div>
+
+            <h4>Animations</h4>
+            <div class="btn-grid">
+                <button onclick="control('mode', '2')">Eyes</button>
+                <button onclick="control('mode', 'a')">Dog</button>
+                <button onclick="control('mood', 'GAME')">Game</button>
+                <button onclick="control('mode', '99')">Text</button>
             </div>
             
-            <h4>Robo Moods</h4>
+            <h4>Emotions</h4>
             <div class="btn-grid moods">
-                <button onclick="control('mood', 'NORMAL')">Normal</button>
                 <button onclick="control('mood', 'HAPPY')">Happy</button>
                 <button onclick="control('mood', 'ANGRY')">Angry</button>
                 <button onclick="control('mood', 'SAD')">Sad</button>
-                <button onclick="control('mood', 'SLEEP')">Sleep</button>
-                <button onclick="control('mood', 'BORED')">Bored</button>
-                <button onclick="control('mood', 'GAME')">Start Game</button>
-                <button onclick="control('mood', 'SUSPICIOUS')">Suspicious</button>
-                <button onclick="control('mood', 'JEALOUS')">Jealous</button>
                 <button onclick="control('mood', 'NAUGHTY')">Naughty</button>
-                <button onclick="control('mood', 'SICK')">Sick</button>
-                <button onclick="control('mood', 'SCARE')">Scare</button>
-                <button onclick="control('mood', 'ANNOYED')">Annoyed</button>
-                <button onclick="control('mood', 'WEATHER_SUN')">Sun</button>
-                <button onclick="control('mood', 'WEATHER_RAIN')">Rain</button>
-                <button onclick="control('mood', 'WEATHER_SNOW')">Snow</button>
-                <button onclick="control('mood', 'STARS')">Stars ✨</button>
-                <button onclick="control('mood', 'DANCE')">Dance 💃</button>
-                <button onclick="control('mood', 'SING')">Sing 🎶</button>
+                <button onclick="control('mood', 'DANCE')">Dance</button>
+                <button onclick="control('mood', 'STARS')">Stars</button>
+            </div>
+
+            <h4>Hardware</h4>
+            <div class="btn-grid">
+                <button onclick="control('cmd', '+')">+</button>
+                <button onclick="control('cmd', '-')">-</button>
+                <button onclick="control('cmd', 'i')" class="full">Invert</button>
             </div>
         </div>
     </div>
-    <script src="{{ url_for('static', filename='script.js') }}?v=3"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=4"></script>
 </body>
 </html>
