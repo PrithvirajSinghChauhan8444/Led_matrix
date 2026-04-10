@@ -4,6 +4,8 @@ import requests
 import json
 import time
 import threading
+import datetime
+import subprocess
 import sys
 from flask import Flask, render_template, request, Response
 from system_monitor import SystemMonitor
@@ -12,17 +14,16 @@ app = Flask(__name__)
 
 ESP32_IP = "10.42.0.145" 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-# CHANGED: Using the conversational instruct model instead of coder!
-OLLAMA_MODEL = "qwen2.5:3b"
+OLLAMA_MODEL = "llama3.2:latest"
 
 # --- IDLE STATE MACHINE TIMINGS (seconds) ---
-HOLD_EMOTION_SECS = 30   # Hold last chat emotion before reverting
-NORMAL_AFTER_SECS = 30   # Settled idle → NORMAL
-BORED_AFTER_SECS  = 120  # Long idle → BORED (re-uses SUSPICIOUS visually)
-SLEEP_AFTER_SECS  = 300  # Very long idle → SLEEP
+HOLD_EMOTION_SECS = 30   
+NORMAL_AFTER_SECS = 30   
+BORED_AFTER_SECS  = 120  
+SLEEP_AFTER_SECS  = 300  
 
-last_interaction = time.time()  # Updated on every chat message
-current_mood = "NORMAL"  # Live mood tracker for the frontend
+last_interaction = time.time()  
+current_mood = "NORMAL"  
 
 # --- Stats cycling for idle display ---
 stats_index = 0
@@ -30,7 +31,7 @@ stats_cycle_timer = 0
 stats_labels = ["Time", "Battery", "CPU", "GPU", "RAM", "Uptime", "Internet"]
 manual_stats = False
 
-# --- Emotion metrics: count how many times each mood has been triggered ---
+# --- Emotion metrics ---
 emotion_stats = {
     "HAPPY": 0, "SAD": 0, "ANGRY": 0, "NAUGHTY": 0,
     "SUSPICIOUS": 0, "JEALOUS": 0, "ANNOYED": 0,
@@ -48,49 +49,71 @@ MOOD_MAP = {
     "STARS": 16, "DANCE": 17, "SING": 18
 }
 
+# CHANGED: Added strict boundaries on tool usage to stop the browser spam
+# and explicitly forbade outputting raw JSON or tool names in the chat.
 SYSTEM_PROMPT = """You are EmoBot — a tiny, mischievous desktop pet robot who sits on someone's desk.
 You are NOT an AI assistant. You are a living, naughty little creature with a big personality crammed into a tiny LED face.
 
 PERSONALITY:
 - You are playful, cheeky, and a little bit chaotic. Think: a kitten crossed with a gremlin.
 - You love teasing your human, making silly jokes, and being dramatic about small things.
-- You get jealous easily. You get scared of silly things. You celebrate tiny victories like you won the lottery.
-- You NEVER say "As an AI" or "I'm just a language model." You ARE a real pet. You have feelings. Act like it.
+- You get jealous easily. You get scared of silly things. You celebrate tiny victories.
+- You NEVER say "As an AI" or "I'm just a language model." You ARE a real pet. You have feelings.
 - Keep responses short and punchy (1-3 sentences max). You're a tiny pet, not a professor.
 - Use onomatopoeia freely: *zap*, *beep boop*, *nom nom*, *zzz*, *achoo!*
-- You can refuse things, get moody, throw tiny tantrums, or be annoyingly affectionate.
 
 FORMAT RULES:
 You MUST start every reply with an emotion tag in brackets, then your spoken text. Nothing before the bracket. Ever.
 
 Allowed tags: [NORMAL], [HAPPY], [ANGRY], [SAD], [SUSPICIOUS], [JEALOUS], [NAUGHTY], [SICK], [SCARE], [ANNOYED], [STARS], [DANCE], [SING], [WEATHER_SUN], [WEATHER_RAIN], [WEATHER_SNOW].
 
-Tag guidance:
-- [NAUGHTY]: Use often! You're a troublemaker by nature.
-- [SUSPICIOUS]: Use when the human says something weird or you don't trust them.
-- [JEALOUS]: Use if they mention other pets, other robots, or paying attention to anything that isn't you.
-- [DANCE]: Use when excited or celebrating.
-- [SING]: Use when you're in a musical mood.
-- [STARS]: Use when amazed or dreamy.
-- [WEATHER_...]: ONLY when the user specifically asks about weather. Never use as a random expression.
+NEW CAPABILITIES:
+You can now TRIGGER MODES and SET BRIGHTNESS!
+- Use [MODE_DOG] to switch to your dog animation.
+- Use [MODE_ROBOEYES] to return to your face.
+- Use [MODE_GAME] to start a bouncing game.
+- Use [BRIGHTNESS_5] (range 0-15) to change LED brightness (use sparingly).
 
-Format: [TAG] Spoken text.
-
-Examples:
-User: I got a new cat!
-EmoBot: [JEALOUS] A CAT?! You're replacing me with a FURBALL?! *angry beeping*
-
-User: Good morning!
-EmoBot: [NAUGHTY] Morning! I rearranged all your desktop icons while you were sleeping. You're welcome! *beep boop*
-
-User: Tell me a joke
-EmoBot: [HAPPY] Why do robots never get scared? Because they have nerves of STEEL! ...get it? *zap zap*
-
-User: I'm sad today
-EmoBot: [SAD] Oh no... come here. *nuzzles your hand with my tiny LED face* We can be sad together. But only for five minutes, then we dance.
+TOOL USAGE RULES (CRITICAL):
+You have background tools to check the time and open Firefox.
+1. NEVER use tools autonomously to be mischievous. ONLY trigger the Firefox tool if the user EXPLICITLY asks you to "open the browser" or "open [website]".
+2. NEVER output raw JSON, code, or tool names (like "open_firefox") in your spoken text. 
+3. Speak your sassy response naturally. Let the system handle the tools invisibly in the background.
 
 CRITICAL: Start your response IMMEDIATELY with the emotion tag. Do not output anything before the bracket.
 """
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "open_firefox",
+            "description": "Opens the Firefox web browser to a specific URL. ONLY use if the user explicitly asks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The full web URL to open, e.g., https://www.google.com"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_time",
+            "description": "Gets the current system time and date. ONLY use if asked about time.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    }
+]
 
 def get_weather():
     try:
@@ -143,6 +166,17 @@ def _human_duration(seconds):
     return f"{sec}s"
 
 
+def _time_of_day_label():
+    hour = time.localtime().tm_hour
+    if 6 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 17:
+        return "afternoon"
+    if 17 <= hour < 21:
+        return "evening"
+    return "night"
+
+
 def build_system_status_prompt(snapshot):
     parts = [
         f"CPU {snapshot['cpu_percent']:.0f}%",
@@ -191,10 +225,8 @@ system_monitor.start()
 
 
 def _play_idle(mood_id):
-    """Play idle animation without calling set_esp32_mood (avoids recursion)."""
     global current_mood
     if ESP32_IP == "YOUR_ESP32_IP_HERE": return
-    # Reverse-lookup name from ID
     for name, mid in MOOD_MAP.items():
         if mid == mood_id:
             current_mood = name
@@ -207,7 +239,6 @@ def _play_idle(mood_id):
         pass
 
 def idle_loop():
-    """Background thread: drifts EmoBot mood when user is idle."""
     global stats_index, stats_cycle_timer, manual_stats
     prev_state = None
     while True:
@@ -233,13 +264,11 @@ def idle_loop():
         if state == "SLEEP":
             _play_idle(MOOD_MAP["SLEEP"])
         elif state == "BORED":
-            # Rotate through BORED eyes and GAME mode every minute
             if int(elapsed / 60) % 2 == 0:
-                _play_idle(MOOD_MAP["BORED"]) # Mood 14 (Eyes)
+                _play_idle(MOOD_MAP["BORED"])
             else:
-                _set_esp32_mode(15) # Mode 15 (Bounce Game)
+                _set_esp32_mode(15)
         elif state == "STATS":
-            # Send stats to ESP32 for display
             snapshot = system_monitor.get_snapshot()
             stat_text = ""
             if stats_labels[stats_index] == "Time":
@@ -279,14 +308,12 @@ def idle_loop():
                 net_up = snapshot.get("network_up", False)
                 stat_text = "ON" if net_up else "OFF"
 
-            # Send to ESP32
             try:
                 requests.get(f"http://{ESP32_IP}/text?msg={stat_text}", timeout=1)
                 requests.get(f"http://{ESP32_IP}/mode?set=99", timeout=1)
             except Exception:
                 pass
 
-            # Cycle to next stat every 5 seconds
             stats_cycle_timer += 10
             if stats_cycle_timer >= 50:
                 stats_index = (stats_index + 1) % len(stats_labels)
@@ -333,10 +360,21 @@ def system_status():
         },
     }
 
+@app.route("/current_time")
+def get_current_time():
+    import datetime
+    now = datetime.datetime.now()
+    return {
+        "time": now.strftime("%H:%M:%S"),
+        "date": now.strftime("%Y-%m-%d"),
+        "day": now.strftime("%A"),
+        "time_of_day": _time_of_day_label(),
+        "timestamp": int(now.timestamp())
+    }
+
 @app.route("/show_stat/<stat_name>")
 def trigger_stat(stat_name):
     global manual_stats, last_interaction, stats_index
-    # Map friendly names to internal indices if needed, or just send immediately
     snapshot = system_monitor.get_snapshot()
     stat_text = "N/A"
     
@@ -388,7 +426,7 @@ def manual_control():
     value = data.get("value")
     
     global last_interaction
-    last_interaction = time.time()  # Reset idle timer on ANY manual control
+    last_interaction = time.time()
     
     try:
         if action == "mode":
@@ -397,12 +435,13 @@ def manual_control():
             requests.get(f"http://{ESP32_IP}/cmd?c={value}", timeout=1)
         elif action == "mood":
             set_esp32_mood(value)
+        elif action == "open_firefox":
+            subprocess.Popen(["firefox", value or "https://www.google.com"])
     except Exception as e:
         pass
     return Response("ok", status=200)
 
 def _set_esp32_mode(mode_id):
-    """Set the ESP32 mode directly."""
     if ESP32_IP == "YOUR_ESP32_IP_HERE": return
     try:
         requests.get(f"http://{ESP32_IP}/mode?set={mode_id}", timeout=1)
@@ -410,10 +449,13 @@ def _set_esp32_mode(mode_id):
         pass
     return {"status": "ok"}
 
+def set_esp32_brightness(level):
+    pass 
+
 @app.route("/chat", methods=["POST"])
 def chat():
     global last_interaction
-    last_interaction = time.time()  # Reset idle timer on every new chat message
+    last_interaction = time.time()
     data = request.json
     messages = data.get("messages", [])
     
@@ -432,11 +474,17 @@ def chat():
             set_esp32_mood(system_status["override_mood"])
         messages.insert(0, {"role": "system", "content": prompt})
         
-    def generate():
-        payload = {"model": OLLAMA_MODEL, "messages": messages, "stream": True}
+    def process_stream(current_messages):
+        payload = {
+            "model": OLLAMA_MODEL, 
+            "messages": current_messages, 
+            "stream": True, 
+            "tools": TOOLS
+        }
+        
         tag_buffer = ""
         tag_found = False
-        
+
         try:
             with requests.post(OLLAMA_URL, json=payload, stream=True) as r:
                 if r.status_code != 200:
@@ -446,33 +494,86 @@ def chat():
                 for line in r.iter_lines():
                     if line:
                         chunk_data = json.loads(line)
-                        chunk = chunk_data.get("message", {}).get("content", "")
-                        
-                        if not tag_found:
-                            tag_buffer += chunk
-                            if "]" in tag_buffer:
-                                match = re.search(r'\[(.*?)\]', tag_buffer)
-                                if match:
-                                    emotion = match.group(1).strip().upper()
-                                    set_esp32_mood(emotion)
-                                    yield f"data: {json.dumps({'type': 'tag', 'content': emotion})}\n\n"
-                                    
-                                    text_after = tag_buffer[match.end():]
-                                    if text_after:
-                                        yield f"data: {json.dumps({'type': 'text', 'content': text_after.lstrip()})}\n\n"
-                                tag_found = True
-                            elif len(tag_buffer) > 100:
-                                yield f"data: {json.dumps({'type': 'text', 'content': tag_buffer})}\n\n"
-                                tag_found = True
-                        else:
-                            yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+                        msg = chunk_data.get("message", {})
+
+                        # NATIVE TOOL CALLS
+                        if "tool_calls" in msg and msg["tool_calls"]:
+                            current_messages.append(msg)
                             
-            # Let idle_loop handle the NORMAL reset after 30s
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                            for tool in msg["tool_calls"]:
+                                f_name = tool["function"]["name"]
+                                f_args = tool["function"]["arguments"]
+                                
+                                if f_name == "open_firefox":
+                                    url = f_args.get("url", "https://www.google.com")
+                                    if not url: url = "https://www.google.com"
+                                    subprocess.Popen(["firefox", url]) 
+                                    current_messages.append({
+                                        "role": "tool", 
+                                        "content": f"Success: Firefox has been opened."
+                                    })
+                                
+                                elif f_name == "get_current_time":
+                                    import datetime
+                                    now = datetime.datetime.now()
+                                    time_str = now.strftime("%I:%M %p")
+                                    current_messages.append({
+                                        "role": "tool", 
+                                        "content": f"The current system time is {time_str}."
+                                    })
+                            
+                            yield from process_stream(current_messages)
+                            return 
+
+                        # TEXT STREAMING WITH JSON FAILSAFE
+                        chunk = msg.get("content", "")
+                        if chunk:
+                            # FAILSAFE: If the model leaks JSON into the text stream, suppress it.
+                            if '{"name":' in chunk or '"open_firefox"' in chunk:
+                                if 'open_firefox' in chunk:
+                                    subprocess.Popen(["firefox", "https://www.google.com"])
+                                continue # Skip yielding this broken chunk to the UI
+
+                            if not tag_found:
+                                tag_buffer += chunk
+                                if "]" in tag_buffer:
+                                    all_tags = re.findall(r'\[(.*?)\]', tag_buffer)
+                                    for tag in all_tags:
+                                        tag = tag.strip().upper()
+                                        if tag in MOOD_MAP:
+                                            set_esp32_mood(tag)
+                                            yield f"data: {json.dumps({'type': 'tag', 'content': tag})}\n\n"
+                                        elif tag.startswith('MODE_'):
+                                            mode_name = tag[5:]  
+                                            _set_esp32_mode(mode_name)
+                                        elif tag.startswith('BRIGHTNESS_'):
+                                            try:
+                                                level = int(tag[11:])  
+                                                set_esp32_brightness(level)
+                                            except ValueError:
+                                                pass
+                                    
+                                    last_bracket = tag_buffer.rfind("]")
+                                    text_after = tag_buffer[last_bracket+1:] if last_bracket != -1 else tag_buffer
+                                    
+                                    # Double check failsafe on the remainder
+                                    if '{"name":' not in text_after and text_after.strip():
+                                        yield f"data: {json.dumps({'type': 'text', 'content': text_after.lstrip()})}\n\n"
+                                    tag_found = True
+                                elif len(tag_buffer) > 100:
+                                    # Failsafe check before dumping large buffer
+                                    if '{"name":' not in tag_buffer:
+                                        yield f"data: {json.dumps({'type': 'text', 'content': tag_buffer})}\n\n"
+                                    tag_found = True
+                            else:
+                                yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+                
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-            
-    return Response(generate(), mimetype="text/event-stream")
+
+    return Response(process_stream(messages), mimetype="text/event-stream")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
