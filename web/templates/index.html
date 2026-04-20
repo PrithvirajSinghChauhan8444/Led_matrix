@@ -31,6 +31,10 @@
                     </svg>
                 </div>
             </div>
+            <div class="shout-area" style="margin-top: 10px; display: flex; gap: 5px;">
+                <input type="text" id="shout-input" placeholder="SHOUT MESSAGE..." style="flex: 1; background: rgba(255,255,255,0.05); border: 1px solid #222; color: #fff; padding: 8px; border-radius: 4px; font-size: 0.7rem; font-family: monospace;">
+                <button onclick="sendShout()" style="padding: 5px 15px; background: #fff; color: #000; border: none; border-radius: 4px; cursor: pointer; font-size: 0.7rem; font-weight: bold;">SHOUT</button>
+            </div>
         </div>
         <div class="control-section">
             <h3>CONSOLE</h3>
@@ -66,9 +70,18 @@
 
             <h4>Hardware</h4>
             <div class="btn-grid">
-                <button onclick="control('cmd', '+')">+</button>
-                <button onclick="control('cmd', '-')">-</button>
-                <button onclick="control('cmd', 'i')" class="full">Invert</button>
+                <button onclick="control('cmd', '+')">Light +</button>
+                <button onclick="control('cmd', '-')">Light -</button>
+                <button onclick="control('cmd', 'i')" class="full">Invert Signal</button>
+            </div>
+
+            <h4>Orientation</h4>
+            <div class="btn-grid">
+                <button onclick="toggleConfig('flipH')">Flip H</button>
+                <button onclick="toggleConfig('flipV')">Flip V</button>
+                <button onclick="control('config', {rotate: 180})">Rotate 180</button>
+                <button onclick="control('config', {rotate: 0})">Rotate 0</button>
+                <button onclick="control('config', {rotate: 0, flipH: false, flipV: false})" class="full" style="color: #666">Reset All</button>
             </div>
         </div>
     </div>

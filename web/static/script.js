@@ -120,12 +120,26 @@ userInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') sendMessage();
 });
 
-function control(action, value) {
+function control(action, params = {}) {
+    const body = typeof params === 'object' ? { action, ...params } : { action, value: params };
     fetch('/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, value })
+        body: JSON.stringify(body)
     });
+}
+
+let configState = { flipH: false, flipV: false };
+function toggleConfig(key) {
+    configState[key] = !configState[key];
+    control('config', configState);
+}
+
+function sendShout() {
+    const msg = document.getElementById('shout-input').value;
+    if (!msg) return;
+    control('shout', { msg, speed: 50, pause: 4000 });
+    document.getElementById('shout-input').value = '';
 }
 
 function showStats() {

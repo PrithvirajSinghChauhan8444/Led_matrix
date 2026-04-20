@@ -6,6 +6,7 @@
 #include <MD_MAX72xx.h>
 #include <SPI.h>
 #include <WiFi.h> // Changed for ESP32
+#include <Preferences.h>
 #include <stdint.h>
 #include <time.h>
 
@@ -104,6 +105,27 @@ unsigned long lastTick = 0;
 int animDelay = 80;
 bool flip = false;
 
+// --- Stats & Orientation (New) ---
+Preferences prefs;
+String cpuUsage = "0%", ramUsage = "0G", tempValue = "0C", battUsage = "0%";
+unsigned long lastStatCycle = 0;
+int currentStatIndex = 0;
+bool flipH = false, flipV = false;
+int rotation = 0; // 0, 90, 180, 270
+
+// Shout feature
+String shoutMsg = "";
+int shoutSpeed = 50;
+unsigned long shoutEndTime = 0;
+int shoutModeOld = 2;
+
+// 8x8 Bitmaps
+const uint8_t ICON_CPU[] = {0xBD, 0x81, 0xBD, 0x81, 0xBD, 0x81, 0xBD, 0x00};
+const uint8_t ICON_RAM[] = {0xFF, 0x81, 0xBD, 0xBD, 0xBD, 0xBD, 0x81, 0xFF};
+const uint8_t ICON_TEMP[] = {0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x3C, 0x18};
+const uint8_t ICON_MSG[] = {0xFF, 0x81, 0xC3, 0xA5, 0x99, 0x81, 0xFF, 0x00};
+const uint8_t ICON_BATT[] = {0x3C, 0x3C, 0xFF, 0x81, 0x81, 0x81, 0xFF, 0x00};
+
 // Frame buffer — written by web handler, read by loop().
 // Protected by frameMutex to prevent mid-write tearing.
 uint8_t customFrame[256] = {0};
@@ -126,11 +148,26 @@ void drawPixel(int r, int c, bool on) {
   if (r < 0 || r >= 8 || c < 0 || c >= 32)
     return;
 
-  // APPLY 180 ROTATION: (7-r, 31-c)
-  int finalR = 7 - r;
-  int finalC = 31 - c;
+  int finalR = r;
+  int finalC = c;
 
-  mx.setPoint(finalR, finalC, on ? !isInverse : isInverse);
+  // 1. User flips
+  if (flipH) finalC = 31 - finalC;
+  if (flipV) finalR = 7 - finalR;
+
+  // 2. User rotation
+  if (rotation == 180) {
+      finalR = 7 - finalR;
+      finalC = 31 - finalC;
+  }
+  // (90 and 270 are omitted for now as they require rectangular mapping)
+
+  // 3. PHYSICAL MOUNTING CORRECTION (Legacy 180)
+  // This ensures that with flip=0, rotate=0, it stays same as before.
+  int physicalR = 7 - finalR;
+  int physicalC = 31 - finalC;
+
+  mx.setPoint(physicalR, physicalC, on ? !isInverse : isInverse);
 }
 
 // ==================== 2. ROBO EYES (FluxGarage style) ====================
@@ -749,6 +786,89 @@ void drawBounceGame() {
   }
 }
 
+// ==================== STATS & ICONS ====================
+void drawChar(int startC, char c) {
+  for (int r = 0; r < 7; r++) {
+    for (int b = 0; b < 5; b++) {
+      if (startC + b >= 0 && startC + b < 32) {
+        bool pixel = false;
+        if (c >= '0' && c <= '9') {
+          int digit = c - '0';
+          static const uint8_t font[10][5] = {
+              {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
+              {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
+              {0x42, 0x61, 0x51, 0x49, 0x46}, // 2
+              {0x21, 0x41, 0x45, 0x4B, 0x31}, // 3
+              {0x18, 0x14, 0x12, 0x7F, 0x10}, // 4
+              {0x27, 0x45, 0x45, 0x45, 0x39}, // 5
+              {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 6
+              {0x01, 0x71, 0x09, 0x05, 0x03}, // 7
+              {0x36, 0x49, 0x49, 0x49, 0x36}, // 8
+              {0x06, 0x49, 0x49, 0x29, 0x1E}  // 9
+          };
+          pixel = (font[digit][b] & (1 << r)) != 0;
+        } else if (c == ':') {
+          pixel = (r == 2 || r == 4) && b == 2;
+        } else if (c == '%') {
+          pixel = ((r == 0 || r == 6) && b < 4) ||
+                  ((r == 1 || r == 5) && (b == 0 || b == 3)) ||
+                  ((r == 2 || r == 4) && (b == 1 || b == 2)) ||
+                  (r == 3 && b == 2);
+        } else if (c == 'C' || c == 'c') {
+          pixel = b == 0 || r == 0 || r == 6;
+        } else if (c == 'G' || c == 'g') {
+          pixel = b == 0 || r == 0 || r == 6 || (r >= 3 && b == 4) || (r == 3 && b >= 2);
+        } else if (c == '.') {
+          pixel = (r == 6 && b == 2);
+        }
+        if (pixel) drawPixel(r, startC + b, true);
+      }
+    }
+  }
+}
+
+void drawIcon(int startC, const uint8_t *bitmap) {
+  for (int c = 0; c < 8; c++) {
+    for (int r = 0; r < 8; r++) {
+      if (bitmap[c] & (1 << r)) {
+        drawPixel(r, startC + c, true);
+      }
+    }
+  }
+}
+
+void drawStatCard(const uint8_t *icon, String valStr) {
+  drawIcon(0, icon);
+  int textWidth = valStr.length() * 6 - 1;
+  
+  // If text is too wide, don't center, just start at 9
+  int startC = (textWidth > 23) ? 9 : 8 + (24 - textWidth) / 2;
+  
+  for (int i = 0; i < valStr.length(); i++) {
+    drawChar(startC + i * 6, valStr[i]);
+  }
+}
+
+void saveConfig() {
+    prefs.begin("led_matrix", false);
+    prefs.putBool("flipH", flipH);
+    prefs.putBool("flipV", flipV);
+    prefs.putInt("rotation", rotation);
+    prefs.putInt("intensity", intensity);
+    prefs.putBool("isInverse", isInverse);
+    prefs.end();
+}
+
+void loadConfig() {
+    prefs.begin("led_matrix", true);
+    flipH = prefs.getBool("flipH", false);
+    flipV = prefs.getBool("flipV", false);
+    rotation = prefs.getInt("rotation", 0);
+    intensity = prefs.getInt("intensity", 0);
+    isInverse = prefs.getBool("isInverse", true);
+    prefs.end();
+}
+
 void animNetwork() {
   // Display static centered text
   if (networkText.length() == 0) {
@@ -760,98 +880,21 @@ void animNetwork() {
     return;
   }
 
-  // Text width: 6 pixels per char (5 + 1 gap). Leave 1px padding on each side.
+  // Text width: 6 pixels per char (5 + 1 gap).
   String displayText = networkText;
-  int textWidth = displayText.length() * 6 - 1;
-  if (textWidth > 32) {
-    // Use only the last 5 visible chars for long text
-    displayText = displayText.substring(displayText.length() - 5);
-    textWidth = 5 * 6 - 1;
-  }
-  int startC = max(0, (32 - textWidth) / 2);
-
-  // Draw static text
-  for (int i = 0; i < displayText.length(); i++) {
-    char c = displayText[i];
-    int charStart = startC + i * 6;
-    if (charStart > 31 || charStart < -5)
-      continue;
-
-    // Simple 5x7 font for each char
-    for (int r = 0; r < 7; r++) {
-      for (int b = 0; b < 5; b++) {
-        if (charStart + b >= 0 && charStart + b < 32) {
-          bool pixel = false;
-          // Basic font mapping (simplified)
-          if (c >= '0' && c <= '9') {
-            int digit = c - '0';
-            uint8_t font[10][5] = {
-                {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
-                {0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
-                {0x42, 0x61, 0x51, 0x49, 0x46}, // 2
-                {0x21, 0x41, 0x45, 0x4B, 0x31}, // 3
-                {0x18, 0x14, 0x12, 0x7F, 0x10}, // 4
-                {0x27, 0x45, 0x45, 0x45, 0x39}, // 5
-                {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 6
-                {0x01, 0x71, 0x09, 0x05, 0x03}, // 7
-                {0x36, 0x49, 0x49, 0x49, 0x36}, // 8
-                {0x06, 0x49, 0x49, 0x29, 0x1E}  // 9
-            };
-            pixel = (font[digit][b] & (1 << r)) != 0;
-          } else if (c == ':') {
-            pixel = (r == 2 || r == 4) && b == 2;
-          } else if (c == '%') {
-            pixel = ((r == 0 || r == 6) && b < 4) ||
-                    ((r == 1 || r == 5) && (b == 0 || b == 3)) ||
-                    ((r == 2 || r == 4) && (b == 1 || b == 2)) ||
-                    (r == 3 && b == 2);
-          } else if (c == '+') {
-            pixel = (r == 1 && b == 2) || (r == 2 && b == 2) ||
-                    (r == 3 && b == 2) || (r == 2 && b == 1) ||
-                    (r == 2 && b == 3);
-          } else if (c == '-') {
-            pixel = (r == 2 && b >= 1 && b <= 3);
-          } else if (c == 'O') {
-            pixel = ((r == 0 || r == 6) && (b >= 1 && b <= 3)) ||
-                    ((r >= 1 && r <= 5) && (b == 0 || b == 4));
-          } else if (c == 'N') {
-            pixel = (b == 0 || b == 4) || (r == b);
-          } else if (c == 'F') {
-            pixel = b == 0 || (r == 0 && b <= 3) || (r == 3 && b <= 3);
-          } else if (c == 'B') {
-            pixel = b == 0 || ((r == 0 || r == 3 || r == 6) && b <= 3) ||
-                    ((r == 1 || r == 2 || r == 4 || r == 5) && b == 4);
-          } else if (c == 'C') {
-            pixel = b == 0 || r == 0 || r == 6;
-          } else if (c == 'G') {
-            pixel = b == 0 || r == 0 || r == 6 || r == 3 || (b == 4 && r >= 3);
-          } else if (c == 'R') {
-            pixel = b == 0 || (r == 0 && b < 4) || (r == 3 && b < 4) ||
-                    ((r == 1 || r == 2) && b == 4) ||
-                    ((r == 4 || r == 5) && b == 3);
-          } else if (c == 'H') {
-            pixel = b == 0 || b == 4 || r == 3;
-          } else if (c == 'U') {
-            pixel = (b == 0 || b == 4) || (r == 6 && b >= 1 && b <= 3);
-          } else if (c == 'P') {
-            pixel = b == 0 || (r == 0 && b <= 3) || (r == 3 && b <= 3) ||
-                    ((r == 1 || r == 2) && b == 4);
-          } else if (c == 'A') {
-            pixel = b == 0 || b == 4 || r == 0 || r == 3;
-          } else if (c == 'I') {
-            pixel = b == 2 || r == 0 || r == 6;
-          } else if (c == 'T') {
-            pixel = r == 0 || b == 2;
-          } else if (c == ' ') {
-            pixel = false;
-          } else {
-            // Default to block for unknown chars
-            pixel = true;
-          }
-          if (pixel)
-            drawPixel(r, charStart + b, true);
-        }
-      }
+  int textWidth = displayText.length() * 6;
+  
+  if (textWidth <= 32) {
+    // Center if fits
+    int startC = (32 - textWidth + 1) / 2;
+    for (int i = 0; i < displayText.length(); i++) {
+        drawChar(startC + i * 6, displayText[i]);
+    }
+  } else {
+    // Scroll if too long
+    int scrollPos = 32 - ((millis() / 50) % (textWidth + 32));
+    for (int i = 0; i < displayText.length(); i++) {
+        drawChar(scrollPos + i * 6, displayText[i]);
     }
   }
 }
@@ -859,6 +902,7 @@ void animNetwork() {
 // ==================== SETUP ====================
 void setup() {
   Serial.begin(115200);
+  loadConfig();
   mx.begin();
   mx.control(MD_MAX72XX::INTENSITY, intensity);
   mx.clear();
@@ -965,8 +1009,38 @@ void setup() {
         intensity = request->getParam("set")->value().toInt();
         intensity = constrain(intensity, 0, 15);
         mx.control(MD_MAX72XX::INTENSITY, intensity);
+        saveConfig();
       }
       request->send(200, "text/plain", "Intensity updated");
+    });
+
+    server.on("/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+      if (request->hasParam("flipH")) flipH = request->getParam("flipH")->value() == "1";
+      if (request->hasParam("flipV")) flipV = request->getParam("flipV")->value() == "1";
+      if (request->hasParam("rotate")) rotation = request->getParam("rotate")->value().toInt();
+      saveConfig();
+      request->send(200, "text/plain", "Config updated");
+    });
+
+    server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request) {
+      if (request->hasParam("cpu")) cpuUsage = request->getParam("cpu")->value();
+      if (request->hasParam("ram")) ramUsage = request->getParam("ram")->value();
+      if (request->hasParam("temp")) tempValue = request->getParam("temp")->value();
+      if (request->hasParam("batt")) battUsage = request->getParam("batt")->value();
+      currentMode = 100; // Stats mode
+      request->send(200, "text/plain", "Stats updated");
+    });
+
+    server.on("/shout", HTTP_GET, [](AsyncWebServerRequest *request) {
+      if (request->hasParam("msg")) {
+        shoutMsg = request->getParam("msg")->value();
+        shoutSpeed = request->hasParam("speed") ? request->getParam("speed")->value().toInt() : 50;
+        int pause = request->hasParam("pause") ? request->getParam("pause")->value().toInt() : 3000;
+        shoutEndTime = millis() + pause;
+        if (currentMode != 101) shoutModeOld = currentMode;
+        currentMode = 101; // Shout mode
+      }
+      request->send(200, "text/plain", "Shout triggered");
     });
 
     server.begin();
@@ -1049,6 +1123,28 @@ void loop() {
     break;
   case 99:
     animNetwork();
+    break;
+  case 100: // Stats mode
+    if (millis() - lastStatCycle > 4000) {
+        lastStatCycle = millis();
+        currentStatIndex = (currentStatIndex + 1) % 4;
+    }
+    if (currentStatIndex == 0) drawStatCard(ICON_CPU, cpuUsage);
+    else if (currentStatIndex == 1) drawStatCard(ICON_RAM, ramUsage);
+    else if (currentStatIndex == 2) drawStatCard(ICON_TEMP, tempValue);
+    else drawStatCard(ICON_BATT, battUsage);
+    break;
+  case 101: // Shout mode
+    {
+        int textWidth = shoutMsg.length() * 6;
+        int scrollPos = 32 - ((millis() / shoutSpeed) % (textWidth + 32));
+        for (int i = 0; i < shoutMsg.length(); i++) {
+            drawChar(scrollPos + i * 6, shoutMsg[i]);
+        }
+        if (millis() > shoutEndTime) {
+            currentMode = shoutModeOld;
+        }
+    }
     break;
   }
 

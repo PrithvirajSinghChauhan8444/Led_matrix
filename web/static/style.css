@@ -199,3 +199,16 @@ input:focus {
 }
 
 .send-btn-wrap path { stroke: var(--bg); }
+
+.shout-area button:hover {
+    background: #ccc !important;
+}
+
+.shout-area input:focus {
+    border-color: #444 !important;
+    outline: none;
+}
+
+.full {
+    grid-column: span 2;
+}

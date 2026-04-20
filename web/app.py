@@ -219,6 +219,40 @@ def set_esp32_mood(mood_name):
     except Exception:
         pass
 
+def update_esp32_stats(cpu, ram, temp, batt):
+    """Sends system stats to the ESP32 dashboard."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    try:
+        # Format strings here so the ESP32 just displays them
+        cpu_str = f"{cpu}%"
+        ram_str = f"{ram}" # Expecting formatted string like "4.56G"
+        temp_str = f"{temp}C"
+        batt_str = f"{batt}" # Expecting formatted string like "85%+"
+        requests.get(f"http://{ESP32_IP}/stats?cpu={cpu_str}&ram={ram_str}&temp={temp_str}&batt={batt_str}", timeout=1)
+    except Exception:
+        pass
+
+def set_esp32_config(flipH=None, flipV=None, rotate=None):
+    """Updates orientation settings on the ESP32."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    params = []
+    if flipH is not None: params.append(f"flipH={1 if flipH else 0}")
+    if flipV is not None: params.append(f"flipV={1 if flipV else 0}")
+    if rotate is not None: params.append(f"rotate={rotate}")
+    if not params: return
+    try:
+        requests.get(f"http://{ESP32_IP}/config?{'&'.join(params)}", timeout=1)
+    except Exception:
+        pass
+
+def send_esp32_shout(msg, speed=50, pause=3000):
+    """Sends an overriding scrolling message to the ESP32."""
+    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    try:
+        requests.get(f"http://{ESP32_IP}/shout?msg={msg}&speed={speed}&pause={pause}", timeout=1)
+    except Exception:
+        pass
+
 
 system_monitor = SystemMonitor()
 system_monitor.start()
@@ -270,53 +304,30 @@ def idle_loop():
                 _set_esp32_mode(15)
         elif state == "STATS":
             snapshot = system_monitor.get_snapshot()
-            stat_text = ""
-            if stats_labels[stats_index] == "Time":
-                import datetime
-                now = datetime.datetime.now()
-                stat_text = now.strftime("%H:%M")
-            elif stats_labels[stats_index] == "Battery":
-                if snapshot.get("battery_percent") is not None:
-                    plugged = "+" if snapshot.get("battery_plugged") else "-"
-                    stat_text = f"B{snapshot['battery_percent']}{plugged}"
-                else:
-                    stat_text = "B N/A"
-            elif stats_labels[stats_index] == "CPU":
-                cpu = snapshot.get("cpu_percent")
-                if cpu is not None:
-                    stat_text = f"C{int(cpu)}%"
-                else:
-                    stat_text = "C N/A"
-            elif stats_labels[stats_index] == "GPU":
-                temp = snapshot.get("gpu_temp_c")
-                if temp is not None:
-                    stat_text = f"G{int(temp)}C"
-                else:
-                    stat_text = "G N/A"
-            elif stats_labels[stats_index] == "RAM":
-                ram = snapshot.get("ram_percent")
-                if ram is not None:
-                    stat_text = f"R{int(ram)}%"
-                else:
-                    stat_text = "R N/A"
-            elif stats_labels[stats_index] == "Uptime":
-                secs = snapshot.get("uptime_secs", 0)
-                hours = secs // 3600
-                mins = (secs % 3600) // 60
-                stat_text = f"U{hours}:{mins:02d}"
-            elif stats_labels[stats_index] == "Internet":
-                net_up = snapshot.get("network_up", False)
-                stat_text = "ON" if net_up else "OFF"
-
+            cpu = int(snapshot.get("cpu_percent", 0))
+            
+            # RAM usage in GB with 2 decimal places
             try:
-                requests.get(f"http://{ESP32_IP}/text?msg={stat_text}", timeout=1)
-                requests.get(f"http://{ESP32_IP}/mode?set=99", timeout=1)
-            except Exception:
-                pass
-
+                import psutil
+                mem = psutil.virtual_memory()
+                used_gb = mem.used / (1024**3)
+                ram_str = f"{used_gb:.2f}G"
+            except:
+                ram_str = "N/A"
+                
+            temp = int(snapshot.get("cpu_temp_c", 45))
+            
+            # Battery info
+            batt_pct = snapshot.get("battery_percent", 0)
+            plugged = "+" if snapshot.get("battery_plugged") else ""
+            batt_str = f"{int(batt_pct)}%{plugged}"
+            
+            update_esp32_stats(cpu, ram_str, temp, batt_str)
+            _set_esp32_mode(100) # Switch to the new Stats Dashboard mode
+            
             stats_cycle_timer += 10
-            if stats_cycle_timer >= 50:
-                stats_index = (stats_index + 1) % len(stats_labels)
+            if stats_cycle_timer >= 60: # Stay in stats mode for 60s
+                manual_stats = False
                 stats_cycle_timer = 0
         elif state == "NORMAL":
             _play_idle(MOOD_MAP["NORMAL"])
@@ -435,6 +446,18 @@ def manual_control():
             requests.get(f"http://{ESP32_IP}/cmd?c={value}", timeout=1)
         elif action == "mood":
             set_esp32_mood(value)
+        elif action == "config":
+            set_esp32_config(
+                flipH=data.get("flipH"),
+                flipV=data.get("flipV"),
+                rotate=data.get("rotate")
+            )
+        elif action == "shout":
+            send_esp32_shout(
+                data.get("msg", ""),
+                speed=data.get("speed", 50),
+                pause=data.get("pause", 3000)
+            )
         elif action == "open_firefox":
             subprocess.Popen(["firefox", value or "https://www.google.com"])
     except Exception as e:
@@ -450,7 +473,11 @@ def _set_esp32_mode(mode_id):
     return {"status": "ok"}
 
 def set_esp32_brightness(level):
-    pass 
+    if ESP32_IP == "YOUR_ESP32_IP_HERE": return
+    try:
+        requests.get(f"http://{ESP32_IP}/intensity?set={level}", timeout=1)
+    except Exception:
+        pass
 
 @app.route("/chat", methods=["POST"])
 def chat():
