@@ -214,8 +214,8 @@ class SystemMonitor:
             return {"mood": "SICK", "reason": "RAM usage is above 85%"}
         if snapshot["disk_free_percent"] is not None and snapshot["disk_free_percent"] < 10:
             return {"mood": "SUSPICIOUS", "reason": "disk free space is below 10%"}
-        if snapshot["cpu_temp_c"] is not None and snapshot["cpu_temp_c"] >= 75:
-            return {"mood": "ANGRY", "reason": "CPU temperature is above 75°C"}
+        if snapshot["cpu_temp_c"] is not None and snapshot["cpu_temp_c"] >= 90:
+            return {"mood": "ANGRY", "reason": "CPU temperature is above 90°C"}
         if snapshot["gpu_temp_c"] is not None and snapshot["gpu_temp_c"] >= 80:
             return {"mood": "SCARE", "reason": "GPU temperature is above 80°C"}
         if snapshot["network_up"] is False:

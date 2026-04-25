@@ -206,3 +206,121 @@ setInterval(async () => {
         }
     } catch (e) { /* ignore */ }
 }, 3000);
+
+// ─── Proactive Notifications ─────────────────────
+const toastContainer = document.getElementById('toast-container');
+const notifBell = document.getElementById('notif-bell');
+let notifEnabled = true;
+
+function showToast(notif) {
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.innerHTML = `
+        <div class="toast-header">
+            <span class="toast-mood">🤖 ${notif.mood}</span>
+            <span class="toast-time">${notif.timestamp}</span>
+        </div>
+        <div class="toast-body">${notif.message}</div>
+        <div class="toast-hint">click to reply</div>
+    `;
+
+    // Click → seed chat input with EmoBot's message
+    el.addEventListener('click', () => {
+        const input = document.getElementById('user-input');
+        // Seed the conversation — add EmoBot's proactive message as context
+        appendMessage('assistant', notif.message);
+        messages.push({ role: "assistant", content: `[${notif.mood}] ${notif.message}` });
+        input.focus();
+        // Dismiss toast
+        el.classList.add('toast-exit');
+        setTimeout(() => el.remove(), 400);
+    });
+
+    toastContainer.appendChild(el);
+
+    // Auto-dismiss after 8s
+    setTimeout(() => {
+        if (el.parentNode) {
+            el.classList.add('toast-exit');
+            setTimeout(() => el.remove(), 400);
+        }
+    }, 8000);
+}
+
+// Poll for notifications every 5 seconds
+setInterval(async () => {
+    try {
+        // First peek to update bell indicator
+        const peek = await fetch('/notifications/peek');
+        const peekData = await peek.json();
+
+        if (peekData.has_notification) {
+            notifBell.classList.add('has-notif');
+
+            // Fetch and show the notification (clears it server-side)
+            const res = await fetch('/notifications');
+            const data = await res.json();
+            if (data.notification) {
+                showToast(data.notification);
+                updateMood(data.notification.mood);
+            }
+        } else {
+            notifBell.classList.remove('has-notif');
+        }
+    } catch (e) { /* ignore */ }
+}, 5000);
+
+// Manual bell click — fetch notification
+async function fetchAndShowNotification() {
+    try {
+        const res = await fetch('/notifications');
+        const data = await res.json();
+        if (data.notification) {
+            showToast(data.notification);
+        } else {
+            // No pending — show brief "no new" toast
+            const el = document.createElement('div');
+            el.className = 'toast';
+            el.innerHTML = `
+                <div class="toast-body" style="color:#555">No new notifications</div>
+            `;
+            toastContainer.appendChild(el);
+            setTimeout(() => {
+                el.classList.add('toast-exit');
+                setTimeout(() => el.remove(), 400);
+            }, 2000);
+        }
+        notifBell.classList.remove('has-notif');
+    } catch (e) { /* ignore */ }
+}
+
+// Toggle notifications on/off
+async function toggleNotifications() {
+    notifEnabled = !notifEnabled;
+    const toggle = document.getElementById('notif-toggle');
+    toggle.classList.toggle('active', notifEnabled);
+    try {
+        await fetch('/notifications/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: notifEnabled })
+        });
+    } catch (e) { /* ignore */ }
+}
+
+// Load initial notification settings
+(async function loadNotifSettings() {
+    try {
+        const res = await fetch('/notifications/settings');
+        const data = await res.json();
+        notifEnabled = data.enabled;
+        const toggle = document.getElementById('notif-toggle');
+        if (toggle) toggle.classList.toggle('active', notifEnabled);
+        const label = document.getElementById('quiet-hours-label');
+        if (label) {
+            const qs = String(data.quiet_start).padStart(2, '0');
+            const qe = String(data.quiet_end).padStart(2, '0');
+            label.textContent = `${qs}:00 – ${qe}:00`;
+        }
+    } catch (e) { /* ignore */ }
+})();

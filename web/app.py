@@ -9,6 +9,7 @@ import subprocess
 import sys
 from flask import Flask, render_template, request, Response
 from system_monitor import SystemMonitor
+from proactive_engine import ProactiveEngine
 
 app = Flask(__name__)
 
@@ -257,6 +258,14 @@ def send_esp32_shout(msg, speed=50, pause=3000):
 system_monitor = SystemMonitor()
 system_monitor.start()
 
+# --- Proactive Engagement Engine ---
+proactive_engine = ProactiveEngine(
+    system_monitor=system_monitor,
+    esp32_funcs={"set_mood": set_esp32_mood, "send_shout": send_esp32_shout},
+    get_last_interaction=lambda: last_interaction,
+)
+proactive_engine.start()
+
 
 def _play_idle(mood_id):
     global current_mood
@@ -438,6 +447,7 @@ def manual_control():
     
     global last_interaction
     last_interaction = time.time()
+    proactive_engine.on_user_interaction()
     
     try:
         if action == "mode":
@@ -483,6 +493,7 @@ def set_esp32_brightness(level):
 def chat():
     global last_interaction
     last_interaction = time.time()
+    proactive_engine.on_user_interaction()
     data = request.json
     messages = data.get("messages", [])
     
@@ -601,6 +612,44 @@ def chat():
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
     return Response(process_stream(messages), mimetype="text/event-stream")
+
+# --- Proactive Notification Routes ---
+@app.route("/notifications")
+def get_notification():
+    """Poll for pending proactive notification (clears it)."""
+    notif = proactive_engine.get_pending()
+    return {"notification": notif}
+
+@app.route("/notifications/peek")
+def peek_notification():
+    """Check if notification exists without clearing."""
+    return {"has_notification": proactive_engine.peek_pending()}
+
+@app.route("/notifications/history")
+def notification_history():
+    """Return recent notification history."""
+    return {"history": proactive_engine.get_history()}
+
+@app.route("/notifications/test_idle")
+def test_idle_trigger():
+    """Force-fire an idle loneliness notification (bypasses cooldowns)."""
+    import random
+    from proactive_engine import IDLE_MESSAGES
+    mood, message = random.choice(IDLE_MESSAGES)
+    proactive_engine._dispatch(mood, message, "test:idle")
+    return {"status": "fired", "mood": mood, "message": message}
+
+@app.route("/notifications/settings", methods=["GET", "POST"])
+def notification_settings():
+    """Get or update proactive notification settings."""
+    if request.method == "POST":
+        data = request.json or {}
+        if "enabled" in data:
+            proactive_engine.set_enabled(bool(data["enabled"]))
+        if "quiet_start" in data and "quiet_end" in data:
+            proactive_engine.set_quiet_hours(int(data["quiet_start"]), int(data["quiet_end"]))
+        return {"status": "updated", **proactive_engine.get_settings()}
+    return proactive_engine.get_settings()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

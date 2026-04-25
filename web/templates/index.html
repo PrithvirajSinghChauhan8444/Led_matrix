@@ -7,11 +7,18 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+    <div id="toast-container"></div>
     <div class="glass-container main-layout">
         <div class="chat-section">
             <header>
                 <h1>EMOBOT / 01</h1>
-                <div id="mood-badge" class="mood-badge">NORMAL</div>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div id="notif-bell" class="notif-bell" onclick="fetchAndShowNotification()" title="Notifications">
+                        <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        <span class="notif-dot"></span>
+                    </div>
+                    <div id="mood-badge" class="mood-badge">NORMAL</div>
+                </div>
             </header>
             <div id="live-stats">
                 <span>MOOD: <strong id="stat-mood">NORMAL</strong></span> &nbsp;
@@ -82,6 +89,19 @@
                 <button onclick="control('config', {rotate: 180})">Rotate 180</button>
                 <button onclick="control('config', {rotate: 0})">Rotate 0</button>
                 <button onclick="control('config', {rotate: 0, flipH: false, flipV: false})" class="full" style="color: #666">Reset All</button>
+            </div>
+
+            <h4>Notifications</h4>
+            <div class="notif-toggle">
+                <label>Proactive Alerts</label>
+                <div id="notif-toggle" class="toggle-switch active" onclick="toggleNotifications()"></div>
+            </div>
+            <div class="notif-toggle">
+                <label>Quiet Hours</label>
+                <span style="font-size:0.7rem;color:#666;font-family:monospace" id="quiet-hours-label">23:00 – 08:00</span>
+            </div>
+            <div class="btn-grid" style="margin-top:8px">
+                <button onclick="fetch('/notifications/test_idle')" class="full" style="color:#666">⚡ Test Idle Trigger</button>
             </div>
         </div>
     </div>

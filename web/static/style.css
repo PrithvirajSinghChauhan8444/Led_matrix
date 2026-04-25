@@ -212,3 +212,180 @@ input:focus {
 .full {
     grid-column: span 2;
 }
+
+/* ─── Toast Notifications ─────────────────────────── */
+#toast-container {
+    position: fixed;
+    top: 1.5rem;
+    right: 1.5rem;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    pointer-events: none;
+    max-width: 360px;
+}
+
+.toast {
+    pointer-events: all;
+    background: rgba(18, 18, 18, 0.95);
+    border: 1px solid #333;
+    border-left: 3px solid #fff;
+    border-radius: 4px;
+    padding: 1rem 1.2rem;
+    cursor: pointer;
+    animation: toastSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    backdrop-filter: blur(12px);
+    transition: opacity 0.3s, transform 0.3s;
+}
+
+.toast:hover {
+    border-color: #555;
+    transform: translateX(-4px);
+}
+
+.toast.toast-exit {
+    animation: toastFadeOut 0.4s ease forwards;
+}
+
+.toast-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+}
+
+.toast-mood {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.1rem;
+    color: #fff;
+    text-transform: uppercase;
+}
+
+.toast-time {
+    font-size: 0.6rem;
+    color: #555;
+    font-family: monospace;
+}
+
+.toast-body {
+    font-size: 0.82rem;
+    color: #bbb;
+    line-height: 1.5;
+}
+
+.toast-hint {
+    font-size: 0.55rem;
+    color: #444;
+    margin-top: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08rem;
+}
+
+@keyframes toastSlideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes toastFadeOut {
+    from { opacity: 1; transform: translateX(0); }
+    to   { opacity: 0; transform: translateX(80px); }
+}
+
+/* ─── Notification Bell ───────────────────────────── */
+.notif-bell {
+    position: relative;
+    cursor: pointer;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s;
+}
+
+.notif-bell:hover {
+    transform: scale(1.15);
+}
+
+.notif-bell svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: #555;
+    stroke-width: 1.5;
+}
+
+.notif-bell.has-notif svg {
+    stroke: #fff;
+}
+
+.notif-dot {
+    display: none;
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 7px;
+    height: 7px;
+    background: #fff;
+    border-radius: 50%;
+    animation: bellPulse 2s infinite;
+}
+
+.notif-bell.has-notif .notif-dot {
+    display: block;
+}
+
+@keyframes bellPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(1.4); }
+}
+
+/* ─── Notification Settings Toggle ────────────────── */
+.notif-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+}
+
+.notif-toggle label {
+    font-size: 0.7rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.05rem;
+}
+
+.toggle-switch {
+    position: relative;
+    width: 36px;
+    height: 18px;
+    background: #222;
+    border: 1px solid #333;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.toggle-switch.active {
+    background: #fff;
+}
+
+.toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: #666;
+    border-radius: 50%;
+    transition: transform 0.3s, background 0.3s;
+}
+
+.toggle-switch.active::after {
+    transform: translateX(18px);
+    background: #000;
+}
+
