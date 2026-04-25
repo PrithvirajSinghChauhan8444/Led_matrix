@@ -324,3 +324,351 @@ async function toggleNotifications() {
         }
     } catch (e) { /* ignore */ }
 })();
+// ─── Virtual Matrix Engine (1:1 C++ Port) ──────────
+const matrix = document.getElementById('virtual-matrix');
+const LEDS = [];
+let currentMoodTag = 'NORMAL';
+let currentMode = 'EYES';
+let shoutText = '', shoutPos = 32;
+let animationFrame = null, lastUpdate = 0;
+
+// Eye drift state (matches C++ roboEyeX/Y/MoveTimer)
+let eyeX = 0, eyeY = 0, moveTimer = 0;
+// Blink state
+let blinkPhase = 0, blinkCounter = 0;
+
+const MOOD_IDS = {
+    'NORMAL':0,'HAPPY':1,'ANGRY':2,'SAD':3,'SUSPICIOUS':4,'JEALOUS':5,
+    'NAUGHTY':6,'WEATHER_SUN':7,'WEATHER_RAIN':8,'WEATHER_SNOW':9,
+    'SICK':10,'SCARE':11,'ANNOYED':12,'SLEEP':13,'BORED':14,'GAME':15,
+    'STARS':16,'DANCE':17,'SING':18,'DIZZY':19,'LOVE':20,'SAD_CRY':21,
+    'THINK':22,'SNEEZE':23,'WINK':24,'HAPPY_CRY':25,'EXCLAIM':26,'QUESTION':27
+};
+
+function initMatrix() {
+    matrix.innerHTML = '';
+    LEDS.length = 0;
+    for (let i = 0; i < 256; i++) {
+        const d = document.createElement('div');
+        d.className = 'led';
+        matrix.appendChild(d);
+        LEDS.push(d);
+    }
+}
+
+function px(r, c, on) {
+    r = Math.round(r); c = Math.round(c);
+    if (r < 0 || r >= 8 || c < 0 || c >= 32) return;
+    if (on) LEDS[r * 32 + c].classList.add('on');
+}
+
+function drawRoboEye(startC, mood, blink, isLeft) {
+    const t = Date.now();
+    let h = 5, w = 4, rOff = 1, cOff = 1;
+    let shape = Array.from({length:8}, () => Array(6).fill(false));
+
+    // Mood geometry (from C++ drawRoboEye)
+    if (mood === 6) { rOff = isLeft ? 0 : 2; }
+    else if (mood === 5) { if (isLeft) cOff = 2; else { h = 3; rOff = 3; } }
+    else if (mood === 10) { h = 3; rOff = 2; cOff = 1 + (Math.floor(t/50)%3) - 1; }
+    else if (mood === 12) {
+        const p = Math.floor(t/150)%8;
+        const pos = [[1,1],[0,1],[0,2],[0,2],[1,2],[2,2],[2,1],[2,0]];
+        rOff = pos[p][0]; cOff = pos[p][1];
+    } else if (mood === 11) { h = 6; w = 5; rOff = 0; cOff = 0; }
+    else if (mood === 13) { h = 1; w = 5; rOff = 3; cOff = 0; }
+    else if (mood === 14) { h = 5; w = 5; rOff = 1; cOff = 0; }
+
+    // Fill base rectangle (skip weather 7-9)
+    if (mood < 7 || mood >= 10) {
+        for (let r=0; r<h; r++) for (let c=0; c<w; c++)
+            if (r+rOff<8 && c+cOff<6) shape[r+rOff][c+cOff] = true;
+    } else {
+        // Weather icons
+        if (mood === 7) { // SUN
+            [[1,2],[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3],[3,4],[4,1],[4,2],[4,3],[5,2]]
+                .forEach(([r,c]) => shape[r][c] = true);
+        } else if (mood === 8) { // RAIN
+            [[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3],[3,4]]
+                .forEach(([r,c]) => shape[r][c] = true);
+            if (Math.floor(t/150)%2===0) { shape[5][0]=true; shape[6][2]=true; shape[5][4]=true; }
+            else { shape[6][0]=true; shape[5][2]=true; shape[6][4]=true; }
+        } else if (mood === 9) { // SNOW
+            [[1,2],[2,1],[2,2],[2,3],[3,0],[3,2],[3,4],[4,1],[4,2],[4,3],[5,2]]
+                .forEach(([r,c]) => shape[r][c] = true);
+        }
+    }
+
+    // Mood carving (from C++)
+    for (let r=0;r<8;r++) for (let c=0;c<6;c++) {
+        if (!shape[r][c]) continue;
+        if (mood===1) { // HAPPY — arch
+            if (r >= rOff+3) shape[r][c] = false;
+            if (r >= rOff+1 && c > cOff && c < cOff+w-1) shape[r][c] = false;
+        } else if (mood===2) { // ANGRY — brow
+            if (isLeft) {
+                if (r===rOff && c>=cOff+2) shape[r][c] = false;
+                if (r===rOff+1 && c===cOff+3) shape[r][c] = false;
+            } else {
+                if (r===rOff && c<=cOff+1) shape[r][c] = false;
+                if (r===rOff+1 && c===cOff) shape[r][c] = false;
+            }
+        } else if (mood===3) { // SAD
+            if (isLeft) { if (r===rOff && c<=cOff+1) shape[r][c] = false; }
+            else { if (r===rOff && c>=cOff+2) shape[r][c] = false; }
+            if (r >= rOff+4) shape[r][c] = false;
+        } else if (mood===4) { // SUSPICIOUS
+            if (r <= rOff+1) shape[r][c] = false;
+        } else if (mood===11) { // SCARE
+            if (r===0 && (c===0||c===2||c===4)) shape[r][c] = false;
+            if (r===5 && (c===1||c===3)) shape[r][c] = false;
+            if (Math.floor(t/50)%2===0 && r===2 && c===2) shape[r][c] = false;
+        } else if (mood===14) { // BORED
+            if (r <= rOff+1) shape[r][c] = false;
+            if (Math.floor(t/2000)%2===0 && r <= rOff+2) shape[r][c] = false;
+        }
+    }
+
+    // Blink phase
+    if (mood < 7 || mood >= 10) {
+        if (blink===1||blink===3) {
+            for (let r=0;r<8;r++) for (let c=0;c<6;c++)
+                if (r<=rOff || r>=rOff+h-1) shape[r][c] = false;
+        } else if (blink===2) {
+            for (let r=0;r<8;r++) for (let c=0;c<6;c++)
+                if (r !== rOff+Math.floor(h/2)) shape[r][c] = false;
+        }
+    }
+
+    let fX = eyeX, fY = eyeY;
+
+    // SLEEP: ZZZ scroll
+    if (mood===13) {
+        blink = 2;
+        if (Math.floor(t/30000)%2===1 && isLeft) {
+            for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+            const sx = 32 - (Math.floor(t/150)%64);
+            const drawZ = (x,y,big) => {
+                const s = big?5:3;
+                for (let i=0;i<s;i++) { px(y,x+i,true); px(y+s-1,x+i,true); px(y+s-1-i,x+i,true); }
+            };
+            drawZ(sx,4,false); drawZ(sx+6,3,false); drawZ(sx+12,4,false);
+            drawZ(sx+20,2,true); drawZ(sx+28,2,true); drawZ(sx+38,1,true);
+        } else { fY += Math.round(Math.sin(t/1500)*1.5); }
+    }
+
+    // DANCE: bounce
+    if (mood===17) { fX += Math.round(Math.sin(t/400)*4); fY += Math.round(Math.abs(Math.cos(t/400))*-3); }
+
+    // SING: floating notes (hide eyes)
+    if (mood===18) {
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        if (isLeft) {
+            for (let i=0;i<2;i++) {
+                const nx = 28 - (Math.floor(t/(250+i*50))%24);
+                const ny = 2 + Math.round(Math.sin((t+i*1000)/400)*2);
+                if (i===0) { px(ny,nx,true); px(ny+1,nx,true); px(ny+2,nx,true); px(ny,nx+1,true); }
+                else { px(ny,nx,true); px(ny,nx+2,true); px(ny+1,nx,true); px(ny+1,nx+2,true); px(ny,nx+1,true); }
+            }
+        }
+    }
+
+    // STARS: twinkling (hide eyes)
+    if (mood===16) {
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        if (isLeft) {
+            for (let i=0;i<6;i++) {
+                const sx = (i*137+Math.floor(t/100))%32;
+                const sy = (i*257+Math.floor(t/150))%8;
+                if (Math.floor(t/(200+i*50))%2===0) px(sy,sx,true);
+            }
+        }
+    }
+
+    // BORED: organic scan
+    if (mood===14) { fX = Math.round(Math.sin(t/3000)*5+Math.cos(t/1500)*2); }
+
+    // NAUGHTY: breathe
+    if (mood===6) { if (Math.sin(t/800)*0.2+0.9 < 0.9) fY += 1; }
+
+    // ─── Extra Expressions ───────────────────
+
+    if (mood===19) { // DIZZY — spiral in each eye
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        const ang = t / 400;
+        // Draw spiral: 8 points along expanding radius
+        for (let i=0;i<8;i++) {
+            const a = ang + i*0.8;
+            const radius = 0.3 + i*0.35;
+            const sr = Math.round(3 + Math.sin(a)*radius);
+            const sc = Math.round(2.5 + Math.cos(a)*radius);
+            if (sr>=0&&sr<8&&sc>=0&&sc<6) shape[sr][sc] = true;
+        }
+    }
+
+    if (mood===20) { // LOVE — pulsing heart eyes
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        // Heart shape in 6x5 grid, pulse scale
+        const pulse = 1 + Math.sin(t/400)*0.25;
+        const heart = [[0,1],[0,3],[1,0],[1,1],[1,2],[1,3],[1,4],[2,0],[2,1],[2,2],[2,3],[2,4],[3,1],[3,2],[3,3],[4,2]];
+        heart.forEach(([r,c]) => {
+            const pr = Math.round((r-2)*pulse+2), pc = Math.round((c-2)*pulse+2);
+            if (pr>=0&&pr<8&&pc>=0&&pc<6) shape[pr][pc] = true;
+        });
+    }
+
+    if (mood===21) { // SAD_CRY — sad eyes + tears
+        // SAD carving already applied above (mood 3 logic won't fire for 21)
+        // Manually apply sad shape
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        for (let r=0;r<4;r++) for (let c=0;c<w;c++) if(r+rOff<8&&c+cOff<6) shape[r+rOff][c+cOff]=true;
+        if (isLeft) { shape[rOff][cOff]=false; shape[rOff][cOff+1]=false; }
+        else { shape[rOff][cOff+2]=false; shape[rOff][cOff+3]=false; }
+        // Tear drops
+        const td = Math.floor(t/200)%4;
+        px(5+td, startC+2+fX, true);
+        if (td>0) px(4+td, startC+3+fX, true);
+    }
+
+    if (mood===25) { // HAPPY_CRY — happy arch eyes + tears
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        // Happy arch
+        shape[rOff][cOff]=true; shape[rOff][cOff+w-1]=true;
+        shape[rOff+1][cOff]=true; shape[rOff+1][cOff+w-1]=true;
+        shape[rOff+2][cOff]=true; shape[rOff+2][cOff+w-1]=true;
+        for (let c=0;c<w;c++) shape[rOff][cOff+c]=true;
+        // Tears of joy
+        const ht = Math.floor(t/250)%4;
+        px(rOff+3+ht, startC+1+fX, true);
+        px(rOff+3+((ht+2)%4), startC+4+fX, true);
+    }
+
+    if (mood===22) { // THINK — thought bubble with growing dots
+        // Normal eyes, no dart
+        // Draw thought cloud above right eye
+        if (!isLeft) {
+            const dots = Math.floor(t/800)%4; // 0-3 dots appear
+            if (dots>=1) px(0, startC+5+fX, true);
+            if (dots>=2) px(0, startC+3+fX, true);
+            if (dots>=3) { px(0, startC+1+fX, true); px(0, startC+4+fX, true); }
+            // Cloud outline
+            if (dots>=2) { px(1, startC+4+fX, true); px(1, startC+5+fX, true); }
+        }
+    }
+
+    if (mood===23) { // SNEEZE
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        if ((t%2000)<1500) {
+            const sh = (Math.floor(t/50)%2===0)?1:-1;
+            for (let r=0;r<3;r++) for (let c=0;c<4;c++) { const nc=2+c+sh; if(nc>=0&&nc<6) shape[r+3][nc]=true; }
+        } else {
+            for (let i=0;i<8;i++) { const rr=Math.floor(Math.random()*8), rc=Math.floor(Math.random()*6); shape[rr][rc]=true; }
+        }
+    }
+
+    if (mood===24 && !isLeft) { // WINK — right eye closed
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        for (let c=0;c<4;c++) shape[4][c+1]=true;
+    }
+
+    if (mood===26) { // EXCLAIM — ! marks
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        // Exclamation mark shape
+        for (let r=0;r<4;r++) { shape[r][2]=true; shape[r][3]=true; }
+        shape[5][2]=true; shape[5][3]=true; // dot
+        // Flash effect
+        if (Math.floor(t/300)%2===0) { shape[6][2]=true; shape[6][3]=true; }
+    }
+
+    if (mood===27) { // QUESTION — ? marks
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        // ? shape
+        shape[0][1]=true;shape[0][2]=true;shape[0][3]=true;
+        shape[1][3]=true;shape[1][4]=true;
+        shape[2][3]=true;shape[3][2]=true;shape[3][3]=true;
+        shape[4][2]=true;
+        shape[6][2]=true; // dot
+        // Wobble
+        fX += Math.round(Math.sin(t/500)*1);
+    }
+
+    // Draw final shape
+    for (let r=0;r<8;r++) for (let c=0;c<6;c++)
+        if (shape[r][c]) px(r+fY, startC+c+fX, true);
+}
+
+function updateMatrix() {
+    const now = Date.now();
+    if (now - lastUpdate < 80) { animationFrame = requestAnimationFrame(updateMatrix); return; }
+    lastUpdate = now;
+    LEDS.forEach(l => l.classList.remove('on'));
+
+    const mood = MOOD_IDS[currentMoodTag] ?? 0;
+
+    if (currentMode === 'SHOUT') {
+        let x = shoutPos;
+        for (const ch of shoutText) {
+            const d = FONT[ch.toUpperCase()] || [31,31,31];
+            d.forEach((col,ci) => { for (let r=0;r<5;r++) if ((col>>r)&1) px(r+1, x+ci, true); });
+            x += d.length + 1;
+        }
+        shoutPos--;
+        if (shoutPos < -(shoutText.length*5)) shoutPos = 32;
+    } else {
+        // Blink state machine (matches C++ animRoboEyes)
+        blinkCounter++;
+        if (blinkPhase === 0) { if (blinkCounter > 40 && Math.random() < 0.08) { blinkPhase = 1; blinkCounter = 0; } }
+        else { blinkPhase++; if (blinkPhase > 3) blinkPhase = 0; }
+
+        // Eye drift (matches C++ roboMoveTimer logic)
+        if (moveTimer <= 0) {
+            if (Math.random() < 0.6) { eyeX = 0; eyeY = 0; moveTimer = 20+Math.floor(Math.random()*30); }
+            else { eyeX = Math.floor(Math.random()*5)-2; eyeY = Math.floor(Math.random()*3)-1; moveTimer = 10+Math.floor(Math.random()*20); }
+        } else { moveTimer--; }
+
+        drawRoboEye(6, mood, blinkPhase, true);
+        drawRoboEye(20, mood, blinkPhase, false);
+    }
+    animationFrame = requestAnimationFrame(updateMatrix);
+}
+
+const FONT = {
+    '0':[31,17,31],'1':[0,31,0],'2':[29,21,23],'3':[21,21,31],'4':[7,4,31],
+    '5':[23,21,29],'6':[31,21,29],'7':[1,1,31],'8':[31,21,31],'9':[23,21,31],
+    ' ':[0,0],'A':[30,5,30],'B':[31,21,10],'C':[31,17,17],'D':[31,17,14],
+    'E':[31,21,17],'F':[31,5,1],'G':[31,17,29],'H':[31,4,31],'I':[17,31,17],
+    'K':[31,4,27],'L':[31,16,16],'M':[31,2,31],'N':[31,2,31],'O':[31,17,31],
+    'P':[31,5,2],'R':[31,5,26],'S':[18,21,9],'T':[1,31,1],'U':[31,16,31],
+    '%':[2,5,8],'+':[4,14,4],'-':[4,4,4],'.':[16],'!':[0,23,0],'?':[1,21,2]
+};
+
+// Intercepts — instant virtual grid response
+const originalControl = control;
+control = function(action, value) {
+    originalControl(action, value);
+    if (action === 'mood') {
+        currentMode = 'EYES';
+        currentMoodTag = (typeof value === 'string') ? value.toUpperCase() : value;
+        updateMood(currentMoodTag);
+        eyeX = 0; eyeY = 0; blinkPhase = 0;
+    } else if (action === 'shout') {
+        currentMode = 'SHOUT';
+        shoutText = (typeof value === 'object' ? value.msg : value) || '';
+        shoutPos = 32;
+        setTimeout(() => { currentMode = 'EYES'; }, 5000);
+    } else if (action === 'mode') {
+        currentMode = 'EYES';
+    }
+};
+
+const originalTriggerStat = triggerStat;
+triggerStat = function(name) {
+    originalTriggerStat(name);
+    currentMode = 'SHOUT';
+    shoutText = name.toUpperCase();
+    shoutPos = 32;
+    setTimeout(() => { currentMode = 'EYES'; }, 3000);
+};
+
+initMatrix();
+updateMatrix();

@@ -1,6 +1,7 @@
 import time
 import threading
 import subprocess
+import config
 
 try:
     import psutil
@@ -206,18 +207,18 @@ class SystemMonitor:
             self._snapshot = snapshot
 
     def _calculate_override(self, snapshot):
-        if snapshot["battery_percent"] is not None and snapshot["battery_percent"] < 15 and snapshot["battery_plugged"] is False:
+        if snapshot["battery_percent"] is not None and snapshot["battery_percent"] < config.BATTERY_LOW_PERCENT and snapshot["battery_plugged"] is False:
             return {"mood": "SCARE", "reason": "battery is critically low"}
-        if snapshot["cpu_percent"] >= 80:
-            return {"mood": "ANNOYED", "reason": "CPU usage is above 80%"}
-        if snapshot["ram_percent"] >= 85:
-            return {"mood": "SICK", "reason": "RAM usage is above 85%"}
-        if snapshot["disk_free_percent"] is not None and snapshot["disk_free_percent"] < 10:
-            return {"mood": "SUSPICIOUS", "reason": "disk free space is below 10%"}
-        if snapshot["cpu_temp_c"] is not None and snapshot["cpu_temp_c"] >= 90:
-            return {"mood": "ANGRY", "reason": "CPU temperature is above 90°C"}
-        if snapshot["gpu_temp_c"] is not None and snapshot["gpu_temp_c"] >= 80:
-            return {"mood": "SCARE", "reason": "GPU temperature is above 80°C"}
+        if snapshot["cpu_percent"] >= config.CPU_WARN_PERCENT:
+            return {"mood": "ANNOYED", "reason": f"CPU usage is above {config.CPU_WARN_PERCENT}%"}
+        if snapshot["ram_percent"] >= config.RAM_WARN_PERCENT:
+            return {"mood": "SICK", "reason": f"RAM usage is above {config.RAM_WARN_PERCENT}%"}
+        if snapshot["disk_free_percent"] is not None and snapshot["disk_free_percent"] < config.DISK_WARN_PERCENT:
+            return {"mood": "SUSPICIOUS", "reason": f"disk free space is below {config.DISK_WARN_PERCENT}%"}
+        if snapshot["cpu_temp_c"] is not None and snapshot["cpu_temp_c"] >= config.CPU_TEMP_WARN_C:
+            return {"mood": "ANGRY", "reason": f"CPU temperature is above {config.CPU_TEMP_WARN_C}°C"}
+        if snapshot["gpu_temp_c"] is not None and snapshot["gpu_temp_c"] >= config.GPU_TEMP_WARN_C:
+            return {"mood": "SCARE", "reason": f"GPU temperature is above {config.GPU_TEMP_WARN_C}°C"}
         if snapshot["network_up"] is False:
             return {"mood": "SAD", "reason": "network appears disconnected"}
         if snapshot["uptime_secs"] >= 12 * 3600:

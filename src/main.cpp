@@ -477,6 +477,106 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
     }
   }
 
+  // ==================== EXTRA EXPRESSIONS ====================
+
+  // DIZZY (19) — spinning spiral in each eye
+  if (mood == 19) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    float ang = millis() / 400.0;
+    for (int i = 0; i < 8; i++) {
+      float a = ang + i * 0.8;
+      float radius = 0.3 + i * 0.35;
+      int sr = (int)(3.0 + sin(a) * radius + 0.5);
+      int sc = (int)(2.5 + cos(a) * radius + 0.5);
+      if (sr >= 0 && sr < 8 && sc >= 0 && sc < 6) shape[sr][sc] = true;
+    }
+  }
+
+  // LOVE (20) — pulsing heart eyes
+  if (mood == 20) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    float pulse = 1.0 + sin(millis() / 400.0) * 0.25;
+    const int heartPts[][2] = {{0,1},{0,3},{1,0},{1,1},{1,2},{1,3},{1,4},{2,0},{2,1},{2,2},{2,3},{2,4},{3,1},{3,2},{3,3},{4,2}};
+    for (int i = 0; i < 16; i++) {
+      int pr = (int)((heartPts[i][0] - 2) * pulse + 2 + 0.5);
+      int pc = (int)((heartPts[i][1] - 2) * pulse + 2 + 0.5);
+      if (pr >= 0 && pr < 8 && pc >= 0 && pc < 6) shape[pr][pc] = true;
+    }
+  }
+
+  // SAD_CRY (21) — sad eyes + falling tears
+  if (mood == 21) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    for (int r = 0; r < 4; r++) for (int c = 0; c < width; c++)
+      if (r + rOffset < 8 && c + cOffset < 6) shape[r + rOffset][c + cOffset] = true;
+    if (isLeft) { shape[rOffset][cOffset] = false; shape[rOffset][cOffset + 1] = false; }
+    else { shape[rOffset][cOffset + 2] = false; shape[rOffset][cOffset + 3] = false; }
+    int td = (millis() / 200) % 4;
+    draw(5 + td, startC + 2 + finalX, true);
+    if (td > 0) draw(4 + td, startC + 3 + finalX, true);
+  }
+
+  // THINK (22) — normal eyes + thought bubble dots growing
+  if (mood == 22 && !isLeft) {
+    int dots = (millis() / 800) % 4;
+    if (dots >= 1) draw(0, startC + 5 + finalX, true);
+    if (dots >= 2) draw(0, startC + 3 + finalX, true);
+    if (dots >= 3) { draw(0, startC + 1 + finalX, true); draw(0, startC + 4 + finalX, true); }
+    if (dots >= 2) { draw(1, startC + 4 + finalX, true); draw(1, startC + 5 + finalX, true); }
+  }
+
+  // SNEEZE (23) — jitter then burst
+  if (mood == 23) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    if ((millis() % 2000) < 1500) {
+      int sh = ((millis() / 50) % 2 == 0) ? 1 : -1;
+      for (int r = 0; r < 3; r++) for (int c = 0; c < 4; c++) {
+        int nc = 2 + c + sh;
+        if (nc >= 0 && nc < 6) shape[r + 3][nc] = true;
+      }
+    } else {
+      for (int i = 0; i < 8; i++) shape[random(0, 8)][random(0, 6)] = true;
+    }
+  }
+
+  // WINK (24) — right eye closed line
+  if (mood == 24 && !isLeft) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    for (int c = 0; c < 4; c++) shape[4][c + 1] = true;
+  }
+
+  // HAPPY_CRY (25) — happy arch eyes + tears of joy
+  if (mood == 25) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    shape[rOffset][cOffset] = true; shape[rOffset][cOffset + width - 1] = true;
+    shape[rOffset + 1][cOffset] = true; shape[rOffset + 1][cOffset + width - 1] = true;
+    shape[rOffset + 2][cOffset] = true; shape[rOffset + 2][cOffset + width - 1] = true;
+    for (int c = 0; c < width; c++) shape[rOffset][cOffset + c] = true;
+    int ht = (millis() / 250) % 4;
+    draw(rOffset + 3 + ht, startC + 1 + finalX, true);
+    draw(rOffset + 3 + ((ht + 2) % 4), startC + 4 + finalX, true);
+  }
+
+  // EXCLAIM (26) — flashing ! marks
+  if (mood == 26) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    for (int r = 0; r < 4; r++) { shape[r][2] = true; shape[r][3] = true; }
+    shape[5][2] = true; shape[5][3] = true;
+    if ((millis() / 300) % 2 == 0) { shape[6][2] = true; shape[6][3] = true; }
+  }
+
+  // QUESTION (27) — wobbling ? marks
+  if (mood == 27) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    shape[0][1] = true; shape[0][2] = true; shape[0][3] = true;
+    shape[1][3] = true; shape[1][4] = true;
+    shape[2][3] = true; shape[3][2] = true; shape[3][3] = true;
+    shape[4][2] = true;
+    shape[6][2] = true;
+    finalX += (int)(sin(millis() / 500.0) * 1.0);
+  }
+
+  // ==================== DRAW FINAL SHAPE ====================
   for (int r = 0; r < 8; r++) {
     for (int c = 0; c < 6; c++) {
       if (shape[r][c])

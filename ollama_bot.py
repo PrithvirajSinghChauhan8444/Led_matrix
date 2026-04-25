@@ -29,7 +29,10 @@ MOOD_MAP = {
     "WEATHER_SUN": 7, "WEATHER_RAIN": 8, "WEATHER_SNOW": 9,
     "SICK": 10, "SCARE": 11, "ANNOYED": 12,
     "SLEEP": 13, "BORED": 14, "GAME": 15,
-    "STARS": 16, "DANCE": 17, "SING": 18
+    "STARS": 16, "DANCE": 17, "SING": 18,
+    "DIZZY": 19, "LOVE": 20, "SAD_CRY": 21,
+    "THINK": 22, "SNEEZE": 23, "WINK": 24,
+    "HAPPY_CRY": 25, "EXCLAIM": 26, "QUESTION": 27
 }
 
 MODE_MAP = {

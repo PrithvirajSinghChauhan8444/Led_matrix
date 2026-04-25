@@ -21,22 +21,23 @@ import threading
 import subprocess
 import datetime
 from collections import deque
+import config
 
-# ─── Configuration ──────────────────────────────────────────────
-POLL_INTERVAL = 60           # seconds between engine ticks
-IDLE_THRESHOLD = 7200        # 2 hours before loneliness fires
-GLOBAL_COOLDOWN = 3600       # 1 hour between any notifications
+# ─── Configuration (from config.py) ────────────────────────────
+POLL_INTERVAL = config.PROACTIVE_TICK_INTERVAL
+IDLE_THRESHOLD = config.IDLE_LONELINESS_THRESHOLD
+GLOBAL_COOLDOWN = config.GLOBAL_COOLDOWN
 EVENT_COOLDOWN = 1800        # 30 min before same event re-fires
-RANDOM_CHANCE = 0.05         # 5% chance per tick (~1x per 20 min)
-QUIET_START = 23             # 11 PM
-QUIET_END = 8                # 8 AM
-HISTORY_MAX = 20             # max stored notification history
+RANDOM_CHANCE = config.RANDOM_QUIRK_CHANCE
+QUIET_START = config.QUIET_HOUR_START
+QUIET_END = config.QUIET_HOUR_END
+HISTORY_MAX = 20
 
 # ─── Thresholds for system events ───────────────────────────────
-CPU_THRESH = 85
-RAM_THRESH = 90
-BATT_THRESH = 20
-TEMP_THRESH = 80
+CPU_THRESH = config.CPU_WARN_PERCENT
+RAM_THRESH = config.RAM_WARN_PERCENT
+BATT_THRESH = config.BATTERY_LOW_PERCENT
+TEMP_THRESH = config.CPU_TEMP_WARN_C
 
 # ─── Message pools ──────────────────────────────────────────────
 IDLE_MESSAGES = [

@@ -10,18 +10,19 @@ import sys
 from flask import Flask, render_template, request, Response
 from system_monitor import SystemMonitor
 from proactive_engine import ProactiveEngine
+import config
 
 app = Flask(__name__)
 
-ESP32_IP = "10.42.0.145" 
+ESP32_IP = config.ESP32_IP
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "llama3.2:latest"
 
 # --- IDLE STATE MACHINE TIMINGS (seconds) ---
-HOLD_EMOTION_SECS = 30   
-NORMAL_AFTER_SECS = 30   
-BORED_AFTER_SECS  = 120  
-SLEEP_AFTER_SECS  = 300  
+HOLD_EMOTION_SECS = config.IDLE_TIMEOUT_NORMAL
+NORMAL_AFTER_SECS = config.IDLE_TIMEOUT_NORMAL
+BORED_AFTER_SECS  = config.IDLE_TIMEOUT_BORED
+SLEEP_AFTER_SECS  = config.IDLE_TIMEOUT_SLEEP
 
 last_interaction = time.time()  
 current_mood = "NORMAL"  
@@ -47,7 +48,10 @@ MOOD_MAP = {
     "WEATHER_SUN": 7, "WEATHER_RAIN": 8, "WEATHER_SNOW": 9,
     "SICK": 10, "SCARE": 11, "ANNOYED": 12,
     "SLEEP": 13, "BORED": 14, "GAME": 15,
-    "STARS": 16, "DANCE": 17, "SING": 18
+    "STARS": 16, "DANCE": 17, "SING": 18,
+    "DIZZY": 19, "LOVE": 20, "SAD_CRY": 21,
+    "THINK": 22, "SNEEZE": 23, "WINK": 24,
+    "HAPPY_CRY": 25, "EXCLAIM": 26, "QUESTION": 27
 }
 
 # CHANGED: Added strict boundaries on tool usage to stop the browser spam
