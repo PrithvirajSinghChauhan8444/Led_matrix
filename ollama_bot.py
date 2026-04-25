@@ -67,14 +67,16 @@ Tag guidance:
 - [ANNOYED/ANGRY]: Use ONLY for funny, exaggerated drama (e.g., "Oh, my poor gears are turning so fast!").
 - [WEATHER_...]: ONLY when the user specifically asks about weather.
 
-NEW CAPABILITIES:
-You can now TRIGGER MODES and SET BRIGHTNESS!
+You can now TRIGGER MODES, SET BRIGHTNESS, and OPEN APPS!
 - Use [MODE_DOG] to switch to your dog animation.
 - Use [MODE_ROBOEYES] to return to your face.
 - Use [MODE_GAME] to start a bouncing game.
 - Use [BRIGHTNESS_5] (range 0-15) to change LED brightness (use sparingly).
+- Use [OPEN_APP:app_name] to open an application on the user's computer (e.g., [OPEN_APP:firefox], [OPEN_APP:gedit]).
 
-Format: [TAG] [MODE_...] Spoken text.
+CRITICAL RULE: DO NOT open apps or websites unless the user EXPLICITLY asks you to. Do not use [OPEN_APP:...] proactively.
+
+Format: [TAG] [MODE_...] [OPEN_APP:...] Spoken text.
 
 Examples:
 User: Go play as a dog!
@@ -83,9 +85,10 @@ EmoBot: [HAPPY] [MODE_DOG] Woof! I'm the best at fetch, even if I don't have leg
 User: Check your stats.
 EmoBot: [STARS] I'm running at 20% CPU! I'm so efficient I should probably get an extra electron for lunch. *beep*
 
-User: It's too bright.
-EmoBot: [NORMAL] [BRIGHTNESS_2] Dimming down! Now we can both live in the shadows like cool ninjas. *ninja boop*
+User: Open calculator for me.
+EmoBot: [NORMAL] [OPEN_APP:gnome-calculator] Booting up the number cruncher! Don't make me do math though. *beep*
 """
+
 # --- WEATHER ---
 def get_weather():
     try:
@@ -151,6 +154,18 @@ def set_esp32_brightness(level):
         requests.get(f"http://{ESP32_IP}/intensity?set={level}", timeout=1)
     except Exception:
         pass
+
+def open_system_app(app_name):
+    """Opens an application on the host system."""
+    import subprocess
+    try:
+        app_name = app_name.strip()
+        if not app_name: return
+        # Run in background, detached from the python script
+        subprocess.Popen([app_name], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"\n[System: Sent launch command for '{app_name}']")
+    except Exception as e:
+        print(f"\n[System: Failed to launch '{app_name}' - {e}]")
 
 def idle_loop():
     """Background thread: drifts EmoBot mood when user is idle."""
@@ -265,6 +280,12 @@ def chat_loop():
                             # Parse Brightness (simplified)
                             bright_match = re.search(r'\[BRIGHTNESS_(\d+)\]', tag_buffer, re.I)
                             # (Brightness logic skipped for now as ESP32 needs update)
+
+                            # Parse App Opening
+                            app_match = re.search(r'\[OPEN_APP:(.*?)\]', tag_buffer, re.I)
+                            if app_match:
+                                open_system_app(app_match.group(1))
+
 
                             if "]" in tag_buffer:
                                 # Show text after the LAST bracket in the buffer

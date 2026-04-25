@@ -65,3 +65,16 @@ ESP32_IP = "10.42.0.145"
 ESP32_TIMEOUT = 2              # seconds for HTTP timeout
 SHOUT_DEFAULT_SPEED = 50       # scroll speed for shout text
 SHOUT_DEFAULT_PAUSE = 4000     # ms pause after scroll
+
+# ─── Feature specific ───────────────────────────────
+WAKE_HOUR = 8
+SLEEP_HOUR = 23
+POSTURE_INTERVAL = 3600        # 1 hour
+TREAT_MOOD = "HAPPY"           # Mood name for feeding
+MOOD_FEED = 28                 # Special mood ID for feeding
+
+# ─── New Visual Properties ──────────────────────────
+SQUISH_SPEED = 1500            # ms per breathe cycle
+SQUISH_STRENGTH = 0.5          # pixels of vertical stretch
+AUDIO_PEAK_THRESHOLD = 1500    # Raw PCM peak threshold for dance
+AUDIO_DANCE_DECAY = 0.8        # How fast the "jump" settles

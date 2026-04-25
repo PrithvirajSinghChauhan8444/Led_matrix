@@ -23,6 +23,11 @@ import datetime
 from collections import deque
 import config
 
+try:
+    import dbus
+except ImportError:
+    dbus = None
+
 # ─── Configuration (from config.py) ────────────────────────────
 POLL_INTERVAL = config.PROACTIVE_TICK_INTERVAL
 IDLE_THRESHOLD = config.IDLE_LONELINESS_THRESHOLD
@@ -115,6 +120,11 @@ class ProactiveEngine:
         self._enabled = True
         self._quiet_start = QUIET_START
         self._quiet_end = QUIET_END
+        
+        # Phase 2 Feature State
+        self._last_posture_time = time.time()
+        self._last_word_date = None        # "YYYY-MM-DD"
+        self._last_song_key = None         # "Title - Artist"
 
         # Pending notification for web dashboard
         self._pending = None              # {mood, message, timestamp} or None
@@ -211,6 +221,12 @@ class ProactiveEngine:
         # Try triggers in priority order
         fired = self._try_system_events(now)
         if not fired:
+            fired = self._try_posture_reminder(now)
+        if not fired:
+            fired = self._try_word_of_day(now)
+        if not fired:
+            fired = self._try_show_song(now)
+        if not fired:
             fired = self._try_idle(now)
         if not fired:
             fired = self._try_random(now)
@@ -219,6 +235,85 @@ class ProactiveEngine:
         if start > end:
             return hour >= start or hour < end
         return start <= hour < end
+
+    # ─── Trigger: Show Song (MPRIS) ──────────────────────────
+    
+    def _try_show_song(self, now):
+        if dbus is None:
+            return False
+            
+        try:
+            bus = dbus.SessionBus()
+            players = [name for name in bus.list_names() if name.startswith('org.mpris.MediaPlayer2.')]
+            
+            for player_name in players:
+                player = bus.get_object(player_name, '/org/mpris/MediaPlayer2')
+                iface = dbus.Interface(player, 'org.freedesktop.DBus.Properties')
+                metadata = iface.Get('org.mpris.MediaPlayer2.Player', 'Metadata')
+                status = iface.Get('org.mpris.MediaPlayer2.Player', 'PlaybackStatus')
+                
+                if status != "Playing":
+                    continue
+                    
+                title = str(metadata.get('xesam:title', 'Unknown'))
+                artist = str(metadata.get('xesam:artist', ['Unknown'])[0])
+                song_key = f"{title} - {artist}"
+                
+                if song_key != self._last_song_key:
+                    self._dispatch("SING", f"🎵 Now Playing: {song_key}", "mpris")
+                    with self._lock:
+                        self._last_song_key = song_key
+                    return True
+        except Exception:
+            pass
+        return False
+
+    # ─── Trigger: Posture Reminder ───────────────────────────
+    
+    def _try_posture_reminder(self, now):
+        elapsed = now - self._last_posture_time
+        if elapsed < config.POSTURE_INTERVAL:
+            return False
+            
+        messages = [
+            ("ANNOYED", "Hey! Sit straight! Your back isn't a wet noodle. 📏"),
+            ("ANGRY", "POSTURE CHECK! Fix those shoulders!"),
+            ("SUSPICIOUS", "Are you slouching again? I can feel the curve from here..."),
+            ("NORMAL", "Gentle reminder to sit straight and take a deep breath. 🧘"),
+        ]
+        mood, msg = random.choice(messages)
+        self._dispatch(mood, msg, "posture")
+        with self._lock:
+            self._last_posture_time = now
+        return True
+
+    # ─── Trigger: Word of the Day ────────────────────────────
+    
+    def _try_word_of_day(self, now):
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        if self._last_word_date == today:
+            return False
+            
+        # Only fire in the morning (between WAKE_HOUR and WAKE_HOUR + 2)
+        hour = datetime.datetime.now().hour
+        if not (config.WAKE_HOUR <= hour < config.WAKE_HOUR + 2):
+            return False
+
+        word_pool = [
+            ("Ephemeral", "Lasting for a very short time."),
+            ("Serendipity", "Finding something good without looking for it."),
+            ("Petrichor", "The smell of rain on dry ground."),
+            ("Luminous", "Full of or shedding light."),
+            ("Resilient", "Able to withstand or recover quickly."),
+            ("Nebulous", "Hazy, vague, or indistinct."),
+            ("Ethereal", "Extremely light and delicate."),
+        ]
+        word, definition = random.choice(word_pool)
+        self._dispatch("STARS", f"Word of the Day: {word} - {definition}", "word_of_day")
+        
+        with self._lock:
+            self._last_word_date = today
+        return True
 
     # ─── Trigger: System Events ──────────────────────────────
 

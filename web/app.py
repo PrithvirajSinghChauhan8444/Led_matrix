@@ -24,8 +24,53 @@ NORMAL_AFTER_SECS = config.IDLE_TIMEOUT_NORMAL
 BORED_AFTER_SECS  = config.IDLE_TIMEOUT_BORED
 SLEEP_AFTER_SECS  = config.IDLE_TIMEOUT_SLEEP
 
-last_interaction = time.time()  
+last_interaction = time.time()
 current_mood = "NORMAL"  
+audio_peak = 0.0
+
+class AudioAnalyzer(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.peak = 0.0
+        self.running = True
+
+    def run(self):
+        global audio_peak
+        
+        # 1. Get the default sink monitor name
+        try:
+            sink = subprocess.check_output(["pactl", "get-default-sink"]).decode().strip()
+            device = f"{sink}.monitor"
+        except:
+            device = "auto_null.monitor" # fallback
+
+        # 2. Start parec recording from that specific monitor device
+        # This is a 'listener' only, it won't affect your speakers
+        cmd = ["parec", "--latency-msec=20", "--channels=1", "--format=s16le", "--rate=8000", f"--device={device}"]
+        try:
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            while self.running:
+                data = process.stdout.read(320) # 160 samples (20ms at 8k)
+                if not data: break
+                
+                # Convert to raw 16-bit integers
+                import struct
+                count = len(data) // 2
+                samples = struct.unpack(f"<{count}h", data)
+                
+                # Simple peak detection
+                p = 0
+                for s in samples:
+                    if abs(s) > p: p = abs(s)
+                
+                # Normalize and apply decay
+                self.peak = max(self.peak * 0.7, p)
+                audio_peak = self.peak
+        except Exception:
+            pass
+
+audio_analyzer = AudioAnalyzer()
+audio_analyzer.start()
 
 # --- Stats cycling for idle display ---
 stats_index = 0
@@ -292,11 +337,13 @@ def idle_loop():
         time.sleep(10)
         elapsed = time.time() - last_interaction
         hour = time.localtime().tm_hour
-        sleep_threshold = SLEEP_AFTER_SECS // 2 if (hour >= 23 or hour < 6) else SLEEP_AFTER_SECS
-
+        
+        # Day/Night logic from config
+        is_night = (hour >= config.SLEEP_HOUR or hour < config.WAKE_HOUR)
+        
         if manual_stats:
             state = "STATS"
-        elif elapsed > sleep_threshold:
+        elif is_night or elapsed > SLEEP_AFTER_SECS:
             state = "SLEEP"
         elif elapsed > BORED_AFTER_SECS:
             state = "BORED"
@@ -486,6 +533,25 @@ def _set_esp32_mode(mode_id):
         pass
     return {"status": "ok"}
 
+@app.route("/feed", methods=["POST"])
+def feed_bot():
+    """Feeds the bot a treat!"""
+    global last_interaction
+    last_interaction = time.time()
+    proactive_engine.on_user_interaction()
+    
+    # 1. Trigger the happy mood
+    set_esp32_mood(config.TREAT_MOOD if hasattr(config, 'TREAT_MOOD') else "HAPPY")
+    
+    # 2. Send the feed command to ESP32 (if you want a specific feed animation)
+    # We'll use the special mood ID for feeding
+    try:
+        requests.get(f"http://{ESP32_IP}/mood?set={config.MOOD_FEED}", timeout=1)
+    except:
+        pass
+        
+    return {"status": "fed", "message": "Yum! Thanks for the cookie! 🍪"}
+
 def set_esp32_brightness(level):
     if ESP32_IP == "YOUR_ESP32_IP_HERE": return
     try:
@@ -654,6 +720,11 @@ def notification_settings():
             proactive_engine.set_quiet_hours(int(data["quiet_start"]), int(data["quiet_end"]))
         return {"status": "updated", **proactive_engine.get_settings()}
     return proactive_engine.get_settings()
+
+@app.route("/audio_data")
+def get_audio_data():
+    """Returns current audio peak for visualizers."""
+    return {"peak": audio_peak}
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

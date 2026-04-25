@@ -4,6 +4,8 @@ const sendBtn = document.getElementById('send-btn');
 const moodBadge = document.getElementById('mood-badge');
 
 let messages = [];
+let audioPeak = 0;
+let lastJumpTime = 0;
 
 function appendMessage(role, text) {
     const msgDiv = document.createElement('div');
@@ -127,6 +129,15 @@ function control(action, params = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
     });
+}
+
+function feed() {
+    fetch('/feed', { method: 'POST' });
+    // Local preview
+    currentMode = 'EYES';
+    currentMoodTag = 'FEAST';
+    updateMood('HAPPY'); 
+    setTimeout(() => { currentMoodTag = 'NORMAL'; updateMood('NORMAL'); }, 4000);
 }
 
 let configState = { flipH: false, flipV: false };
@@ -342,7 +353,8 @@ const MOOD_IDS = {
     'NAUGHTY':6,'WEATHER_SUN':7,'WEATHER_RAIN':8,'WEATHER_SNOW':9,
     'SICK':10,'SCARE':11,'ANNOYED':12,'SLEEP':13,'BORED':14,'GAME':15,
     'STARS':16,'DANCE':17,'SING':18,'DIZZY':19,'LOVE':20,'SAD_CRY':21,
-    'THINK':22,'SNEEZE':23,'WINK':24,'HAPPY_CRY':25,'EXCLAIM':26,'QUESTION':27
+    'THINK':22,'SNEEZE':23,'WINK':24,'HAPPY_CRY':25,'EXCLAIM':26,'QUESTION':27,
+    'FEAST':28
 };
 
 function initMatrix() {
@@ -364,7 +376,15 @@ function px(r, c, on) {
 
 function drawRoboEye(startC, mood, blink, isLeft) {
     const t = Date.now();
-    let h = 5, w = 4, rOff = 1, cOff = 1;
+    const breathe = Math.sin(t / 1500) * 0.3;
+    const jump = Math.min(audioPeak * 2.0, 1.0); // clamped so eyes stay visible
+    
+    let h = 5 + breathe; 
+    let w = 4;
+    let rOff = 1 - (breathe / 2);
+    let cOff = 1;
+    let fX = eyeX;
+    let fY = eyeY;
     let shape = Array.from({length:8}, () => Array(6).fill(false));
 
     // Mood geometry (from C++ drawRoboEye)
@@ -381,8 +401,10 @@ function drawRoboEye(startC, mood, blink, isLeft) {
 
     // Fill base rectangle (skip weather 7-9)
     if (mood < 7 || mood >= 10) {
-        for (let r=0; r<h; r++) for (let c=0; c<w; c++)
-            if (r+rOff<8 && c+cOff<6) shape[r+rOff][c+cOff] = true;
+        for (let r=0; r<h; r++) for (let c=0; c<w; c++) {
+            let rr = Math.round(r + rOff), cc = Math.round(c + cOff);
+            if (rr >= 0 && rr < 8 && cc >= 0 && cc < 6) shape[rr][cc] = true;
+        }
     } else {
         // Weather icons
         if (mood === 7) { // SUN
@@ -440,7 +462,8 @@ function drawRoboEye(startC, mood, blink, isLeft) {
         }
     }
 
-    let fX = eyeX, fY = eyeY;
+    // Combine offsets
+    fX += 0; fY += 0; // fX and fY already initialized to eyeX/eyeY
 
     // SLEEP: ZZZ scroll
     if (mood===13) {
@@ -457,8 +480,19 @@ function drawRoboEye(startC, mood, blink, isLeft) {
         } else { fY += Math.round(Math.sin(t/1500)*1.5); }
     }
 
-    // DANCE: bounce
-    if (mood===17) { fX += Math.round(Math.sin(t/400)*4); fY += Math.round(Math.abs(Math.cos(t/400))*-3); }
+    // DANCE: audio-reactive in-place animation
+    if (mood===17) {
+        // Horizontal sway driven by audio intensity
+        const sway = Math.sin(t / (300 - audioPeak * 150)) * (2 + audioPeak * 3);
+        fX += Math.round(sway);
+        // Squish: alternate tall/short with beat
+        if (audioPeak > 0.1) {
+            h = (Math.floor(t / 150) % 2 === 0) ? 4 : 6;
+            rOff = (h === 6) ? 0 : 2;
+        }
+        // Width pulse on strong beats
+        if (audioPeak > 0.3) { w = 5; cOff = 0; }
+    }
 
     // SING: floating notes (hide eyes)
     if (mood===18) {
@@ -518,12 +552,20 @@ function drawRoboEye(startC, mood, blink, isLeft) {
     }
 
     if (mood===21) { // SAD_CRY — sad eyes + tears
-        // SAD carving already applied above (mood 3 logic won't fire for 21)
-        // Manually apply sad shape
         for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
-        for (let r=0;r<4;r++) for (let c=0;c<w;c++) if(r+rOff<8&&c+cOff<6) shape[r+rOff][c+cOff]=true;
-        if (isLeft) { shape[rOff][cOff]=false; shape[rOff][cOff+1]=false; }
-        else { shape[rOff][cOff+2]=false; shape[rOff][cOff+3]=false; }
+        for (let r=0;r<4;r++) for (let c=0;c<w;c++) {
+            let rr = Math.round(r + rOff), cc = Math.round(c + cOff);
+            if (rr >= 0 && rr < 8 && cc >= 0 && cc < 6) shape[rr][cc] = true;
+        }
+        if (Math.round(rOff)>=0 && Math.round(rOff)<8) {
+            if (isLeft) { 
+                if(Math.round(cOff)>=0&&Math.round(cOff)<6) shape[Math.round(rOff)][Math.round(cOff)]=false; 
+                if(Math.round(cOff+1)>=0&&Math.round(cOff+1)<6) shape[Math.round(rOff)][Math.round(cOff+1)]=false; 
+            } else { 
+                if(Math.round(cOff+2)>=0&&Math.round(cOff+2)<6) shape[Math.round(rOff)][Math.round(cOff+2)]=false; 
+                if(Math.round(cOff+3)>=0&&Math.round(cOff+3)<6) shape[Math.round(rOff)][Math.round(cOff+3)]=false; 
+            }
+        }
         // Tear drops
         const td = Math.floor(t/200)%4;
         px(5+td, startC+2+fX, true);
@@ -533,26 +575,32 @@ function drawRoboEye(startC, mood, blink, isLeft) {
     if (mood===25) { // HAPPY_CRY — happy arch eyes + tears
         for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
         // Happy arch
-        shape[rOff][cOff]=true; shape[rOff][cOff+w-1]=true;
-        shape[rOff+1][cOff]=true; shape[rOff+1][cOff+w-1]=true;
-        shape[rOff+2][cOff]=true; shape[rOff+2][cOff+w-1]=true;
-        for (let c=0;c<w;c++) shape[rOff][cOff+c]=true;
+        const pts = [[0,0],[0,w-1],[1,0],[1,w-1],[2,0],[2,w-1]];
+        for (let c=0; c<w; c++) pts.push([0,c]);
+        pts.forEach(([r,c]) => {
+            let rr = Math.round(r + rOff), cc = Math.round(c + cOff);
+            if (rr >= 0 && rr < 8 && cc >= 0 && cc < 6) shape[rr][cc] = true;
+        });
         // Tears of joy
         const ht = Math.floor(t/250)%4;
         px(rOff+3+ht, startC+1+fX, true);
         px(rOff+3+((ht+2)%4), startC+4+fX, true);
     }
 
-    if (mood===22) { // THINK — thought bubble with growing dots
-        // Normal eyes, no dart
-        // Draw thought cloud above right eye
-        if (!isLeft) {
-            const dots = Math.floor(t/800)%4; // 0-3 dots appear
-            if (dots>=1) px(0, startC+5+fX, true);
-            if (dots>=2) px(0, startC+3+fX, true);
-            if (dots>=3) { px(0, startC+1+fX, true); px(0, startC+4+fX, true); }
-            // Cloud outline
-            if (dots>=2) { px(1, startC+4+fX, true); px(1, startC+5+fX, true); }
+    if (mood===22) { // THINK — thought bubble only (no eyes)
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        if (isLeft) {
+            // Small rising dots on left side
+            const dots = Math.floor(t/800)%4;
+            if (dots>=1) px(6, startC+3, true);
+            if (dots>=2) px(4, startC+4, true);
+            if (dots>=3) px(2, startC+5, true);
+        } else {
+            // Growing thought cloud on right side
+            const dots = Math.floor(t/800)%4;
+            if (dots>=1) { px(1, startC+0, true); px(1, startC+1, true); }
+            if (dots>=2) { px(0, startC+0, true); px(0, startC+1, true); px(0, startC+2, true); px(1, startC+2, true); }
+            if (dots>=3) { px(0, startC+3, true); px(1, startC+3, true); px(2, startC+0, true); }
         }
     }
 
@@ -592,7 +640,17 @@ function drawRoboEye(startC, mood, blink, isLeft) {
         fX += Math.round(Math.sin(t/500)*1);
     }
 
-    // Draw final shape
+    if (mood===28) { // FEAST — eating cookie
+        for (let r=0;r<8;r++) for (let c=0;c<6;c++) shape[r][c]=false;
+        // Cookie shape
+        const cookie = [[2,1],[2,2],[2,3],[3,0],[3,1],[3,2],[3,3],[3,4],[4,1],[4,2],[4,3]];
+        cookie.forEach(([r,c]) => shape[r][c]=true);
+        // Chocolate chips
+        if (Math.floor(t/300)%2===0) { shape[2][2]=false; shape[3][1]=false; shape[4][3]=false; }
+        // Mouth moving
+        const mouth = Math.floor(t/200)%2;
+        fY += mouth;
+    }
     for (let r=0;r<8;r++) for (let c=0;c<6;c++)
         if (shape[r][c]) px(r+fY, startC+c+fX, true);
 }
@@ -672,3 +730,13 @@ triggerStat = function(name) {
 
 initMatrix();
 updateMatrix();
+
+setInterval(async () => {
+    try {
+        const r = await fetch('/audio_data');
+        const d = await r.json();
+        const p = d.peak / 32768;
+        if (p > 0.05) audioPeak = Math.max(audioPeak, p);
+        else audioPeak *= 0.8;
+    } catch(e) {}
+}, 50);

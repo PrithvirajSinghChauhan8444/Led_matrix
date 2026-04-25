@@ -179,6 +179,13 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
   int rOffset = 1; // Default row offset
   int cOffset = 1; // Default col offset
 
+  // Global "Squishy" Breathing
+  float breathe = sin(millis() / 1500.0) * 0.4;
+  rOffset = (int)(rOffset - (breathe / 2.0) + 0.5);
+  // Subtle height variation
+  if (breathe > 0.3) height = 6;
+  else if (breathe < -0.3) height = 4;
+
   bool shape[8][6] = {false};
 
   if (mood == 6) { // NAUGHTY
@@ -431,10 +438,15 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
                    cos(millis() / 1500.0) * 2.0); // Wavy scanning
   }
 
-  // DANCE logic: Rhythmic bounce
+  // DANCE logic: In-place sway + squish (eyes stay on grid)
   if (mood == 17) {
-    finalX += (int)(sin(millis() / 400.0) * 4.0);
-    finalY += (int)(fabs(cos(millis() / 400.0)) * -3.0);
+    // Fast horizontal sway
+    finalX += (int)(sin(millis() / 200.0) * 4.0);
+    // Squish: alternate tall/short
+    if ((millis() / 150) % 2 == 0) { height = 4; rOffset = 2; }
+    else { height = 6; rOffset = 0; }
+    // Width pulse
+    if ((millis() / 300) % 3 == 0) { width = 5; cOffset = 0; }
   }
 
   // SING logic: Floating musical notes (hide eyes)
@@ -516,13 +528,19 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
     if (td > 0) draw(4 + td, startC + 3 + finalX, true);
   }
 
-  // THINK (22) — normal eyes + thought bubble dots growing
-  if (mood == 22 && !isLeft) {
+  // THINK (22) — thought bubble only (no eyes)
+  if (mood == 22) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
     int dots = (millis() / 800) % 4;
-    if (dots >= 1) draw(0, startC + 5 + finalX, true);
-    if (dots >= 2) draw(0, startC + 3 + finalX, true);
-    if (dots >= 3) { draw(0, startC + 1 + finalX, true); draw(0, startC + 4 + finalX, true); }
-    if (dots >= 2) { draw(1, startC + 4 + finalX, true); draw(1, startC + 5 + finalX, true); }
+    if (isLeft) {
+      if (dots >= 1) draw(6, startC + 3, true);
+      if (dots >= 2) draw(4, startC + 4, true);
+      if (dots >= 3) draw(2, startC + 5, true);
+    } else {
+      if (dots >= 1) { draw(1, startC + 0, true); draw(1, startC + 1, true); }
+      if (dots >= 2) { draw(0, startC + 0, true); draw(0, startC + 1, true); draw(0, startC + 2, true); draw(1, startC + 2, true); }
+      if (dots >= 3) { draw(0, startC + 3, true); draw(1, startC + 3, true); draw(2, startC + 0, true); }
+    }
   }
 
   // SNEEZE (23) — jitter then burst
@@ -574,6 +592,16 @@ void drawRoboEye(int startC, int mood, int blinkPhase, bool isLeft) {
     shape[4][2] = true;
     shape[6][2] = true;
     finalX += (int)(sin(millis() / 500.0) * 1.0);
+  }
+
+  // FEAST (28) — eating cookie
+  if (mood == 28) {
+    for (int r = 0; r < 8; r++) for (int c = 0; c < 6; c++) shape[r][c] = false;
+    const int cookie[][2] = {{2,1},{2,2},{2,3},{3,0},{3,1},{3,2},{3,3},{3,4},{4,1},{4,2},{4,3}};
+    for (int i = 0; i < 11; i++) shape[cookie[i][0]][cookie[i][1]] = true;
+    // chips
+    if ((millis() / 300) % 2 == 0) { shape[2][2] = false; shape[3][1] = false; shape[4][3] = false; }
+    finalY += (millis() / 200) % 2;
   }
 
   // ==================== DRAW FINAL SHAPE ====================
