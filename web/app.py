@@ -16,7 +16,7 @@ app = Flask(__name__)
 
 ESP32_IP = config.ESP32_IP
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "llama3.2:latest"
+OLLAMA_MODEL = "gemma4:e2b"
 
 # --- IDLE STATE MACHINE TIMINGS (seconds) ---
 HOLD_EMOTION_SECS = config.IDLE_TIMEOUT_NORMAL
